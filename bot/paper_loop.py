@@ -39,7 +39,7 @@ COST_PATH = os.environ.get("COST_PATH", "swqos")
 _COSTS = COST_PATHS.get(COST_PATH, COST_PATHS["swqos"])
 LATENCY_BARS = int(os.environ.get("LATENCY_BARS", "1"))
 FAIL_RATE = float(os.environ.get("FAIL_RATE", "0.02"))
-# Validated v2 entry filter (G1 pass 2026-10-12); overridable for research.
+# Validated v3 entry filter (G1 pass 2026-10-15); overridable for research.
 ENTRY_MIN_RET = float(os.environ.get("ENTRY_MIN_RET", "0.05"))
 ENTRY_MIN_BUY = float(os.environ.get("ENTRY_MIN_BUY", "0.60"))
 ENTRY_MAX_DIP = float(os.environ.get("ENTRY_MAX_DIP", "-0.03"))
@@ -92,6 +92,7 @@ def main() -> None:
             log.info("slice off=%d n=%d visit=%d", off, len(batch), visits[replay])
             import collections as _collections
             skip = _collections.Counter()
+            closed_before = wins + losses
             for d in batch:
                 if not entry_liq_ok(d.get("liq_series") or [d.get("liq", 0.0)] * 11,
                                     min_liq=MIN_LIQ_SOL):
@@ -166,7 +167,7 @@ def main() -> None:
                         if jup_close:
                             log.info("jupq sell %s", jup_close)
                 ntf.send_close(ca=ca, name=name,
-                               reason="TP" if why == "take" else ("SL" if why in ("stop", "trail") else ("RUG" if why == "rug" else "TIME")),
+                               reason="TP" if why == "take" else ("STOP" if why == "stop" else ("TRAIL" if why == "trail" else ("RUG" if why == "rug" else "TIME"))),
                                mult=1.0 + r, pnl_sol=pnl, hold_s=hold_s,
                                entry_px=float(d["prices"][10]),
                                exit_px=float(exit_px) if exit_px is not None else float(d["prices"][-1]),
@@ -178,7 +179,13 @@ def main() -> None:
                     file=Path(replay).name, mint=ca, reason=why, r_net=r,
                     pnl_sol=pnl, balance_after=balance,
                     wins=wins, losses=losses))
-            ntf.send_summary(0, wins + losses, 100.0 * wins / max(wins + losses, 1), balance - BALANCE)
+            if wins + losses > closed_before:
+                ntf.send_summary(0, wins + losses, 100.0 * wins / max(wins + losses, 1), balance - BALANCE)
+            else:
+                log.info("cycle done bal=%.4f skip=%s (no closes, summary suppressed) sleeping %ds",
+                         balance, dict(skip), POLL_SECS)
+                time.sleep(POLL_SECS)
+                continue
             log.info("cycle done bal=%.4f skip=%s sleeping %ds",
                      balance, dict(skip), POLL_SECS)
             time.sleep(POLL_SECS)

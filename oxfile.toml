@@ -9,7 +9,7 @@ version = 1
 
 [[apps]]
 name = "meme-paper"
-command = "/home/mdev/Programming/RL_MEMECOIN/.venv/bin/python -u -m bot.paper_loop"
+command = "/usr/bin/python3 -u -m bot.paper_loop"
 cwd = "/home/mdev/Programming/RL_MEMECOIN"
 restart_policy = "always"
 max_restarts = 100
@@ -25,13 +25,13 @@ stop_timeout_secs = 20
 unified_logs = true
 
 [apps.env]
-PATH = "/home/mdev/Programming/RL_MEMECOIN/.venv/bin:/usr/local/bin:/usr/bin:/bin"
+PATH = "/usr/bin:/usr/local/bin:/bin"
 HOME = "/home/mdev"
 POLL_SECS = "300"
 SIZE_SOL = "0.05"
 START_BALANCE_SOL = "1.0"
-REPLAY_PATH = "/home/mdev/Programming/RL_MEMECOIN/data/12.jsonl.zst"
-REPLAY_PATHS = "/home/mdev/Programming/RL_MEMECOIN/data/11.jsonl.zst:/home/mdev/Programming/RL_MEMECOIN/data/12.jsonl.zst:/home/mdev/Programming/RL_MEMECOIN/data/13.jsonl.zst:/home/mdev/Programming/RL_MEMECOIN/data/oct05_11.jsonl.zst:/home/mdev/Programming/RL_MEMECOIN/data/oct05_12.jsonl.zst:/home/mdev/Programming/RL_MEMECOIN/data/oct11_11.jsonl.zst:/home/mdev/Programming/RL_MEMECOIN/data/oct11_12.jsonl.zst:/home/mdev/Programming/RL_MEMECOIN/data/oct12_11.jsonl.zst:/home/mdev/Programming/RL_MEMECOIN/data/oct13_11.jsonl.zst"
+REPLAY_PATH = "/home/mdev/Programming/RL_MEMECOIN/replay_zst/2026-10-05/13.jsonl.zst"
+REPLAY_PATHS = "/home/mdev/Programming/RL_MEMECOIN/replay_zst/2026-10-03/13.jsonl.zst:/home/mdev/Programming/RL_MEMECOIN/replay_zst/2026-10-03/14.jsonl.zst:/home/mdev/Programming/RL_MEMECOIN/replay_zst/2026-10-04/13.jsonl.zst:/home/mdev/Programming/RL_MEMECOIN/replay_zst/2026-10-04/14.jsonl.zst:/home/mdev/Programming/RL_MEMECOIN/replay_zst/2026-10-05/13.jsonl.zst:/home/mdev/Programming/RL_MEMECOIN/replay_zst/2026-10-05/14.jsonl.zst:/home/mdev/Programming/RL_MEMECOIN/replay_zst/2026-10-03/15.jsonl.zst:/home/mdev/Programming/RL_MEMECOIN/replay_zst/2026-10-04/15.jsonl.zst"
 COST_PATH = "swqos"
 LATENCY_BARS = "1"
 FAIL_RATE = "0.02"

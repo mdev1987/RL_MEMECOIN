@@ -197,6 +197,7 @@ class TelegramNotifier:
                    jup: str | None = None) -> None:
         label, icon = {
             "TP": ("TAKE PROFIT", "🎯"), "SL": ("STOP LOSS", "🛑"),
+            "STOP": ("STOP LOSS", "🛑"), "TRAIL": ("TRAILING STOP", "🛑"),
             "TIME": ("TIMEOUT", "⏱️"), "RUG": ("RUG PULL", "🧨"),
         }.get(reason, (reason.upper(), "💰"))
         win = pnl_sol > 0
