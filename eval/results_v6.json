@@ -1,0 +1,41 @@
+{
+ "config": "selective-v3 (0.05,0.60,-0.03) liq>=30 TP60 SL12 trail15 swqos realistic, 600k lines/file",
+ "files": {
+  "2026-10-03/17": {
+   "traded": 11,
+   "mean": 0.00203,
+   "win": 0.45
+  },
+  "2026-10-03/18": {
+   "traded": 21,
+   "mean": 0.00218,
+   "win": 0.43
+  },
+  "2026-10-04/17": {
+   "traded": 13,
+   "mean": 0.00051,
+   "win": 0.38
+  },
+  "2026-10-04/18": {
+   "traded": 18,
+   "mean": 0.00037,
+   "win": 0.22
+  },
+  "2026-10-05/17": {
+   "traded": 15,
+   "mean": 0.00279,
+   "win": 0.6
+  },
+  "2026-10-05/18": {
+   "traded": 9,
+   "mean": 0.0057,
+   "win": 0.56
+  }
+ },
+ "g1": {
+  "mean": 0.00217,
+  "lower95": 0.001,
+  "pass": true
+ },
+ "note": "6 fresh hours 17/18 UTC Oct03-05, never used for tuning; 6/6 positive; second independent G1 pass after results_v5 8/8"
+}
