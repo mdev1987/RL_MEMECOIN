@@ -1,0 +1,14 @@
+[project]
+name = "rl-memecoin"
+version = "0.1.0"
+requires-python = ">=3.14"
+dependencies = [
+    "numpy>=2.5.4",
+    "pandas>=3.0.6",
+    "python-dotenv>=1.2.4",
+    "python-telegram-bot>=22.8",
+    "requests>=2.34.2",
+    "solders>=0.29.0",
+    "telegramify-markdown>=1.4.0",
+    "zstandard>=0.25.0",
+]

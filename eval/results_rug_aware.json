@@ -1,0 +1,153 @@
+{
+ "config": "selective-v1 + rug-aware exits + min-liq gate",
+ "tiers": {
+  "realistic-swqos": {
+   "mean": 0.0006,
+   "lower95": -0.0026,
+   "pass": false,
+   "mean_net_sol": 3.2e-05,
+   "per_file": {
+    "oct04/11": {
+     "scanned": 600001,
+     "npaths": 404,
+     "traded": 24,
+     "rugs": 0,
+     "mean": 0.0019,
+     "win_traded": 0.4583,
+     "max": 0.6008
+    },
+    "oct04/12": {
+     "scanned": 600001,
+     "npaths": 364,
+     "traded": 26,
+     "rugs": 1,
+     "mean": -0.0045,
+     "win_traded": 0.3077,
+     "max": 0.4669
+    },
+    "oct04/13": {
+     "scanned": 600001,
+     "npaths": 320,
+     "traded": 27,
+     "rugs": 0,
+     "mean": 0.0073,
+     "win_traded": 0.4815,
+     "max": 0.7343
+    },
+    "oct05/11": {
+     "scanned": 600001,
+     "npaths": 355,
+     "traded": 18,
+     "rugs": 0,
+     "mean": 0.0053,
+     "win_traded": 0.5,
+     "max": 0.707
+    },
+    "oct05/12": {
+     "scanned": 600001,
+     "npaths": 357,
+     "traded": 27,
+     "rugs": 1,
+     "mean": -0.0018,
+     "win_traded": 0.3704,
+     "max": 0.624
+    },
+    "oct11/11": {
+     "scanned": 600001,
+     "npaths": 330,
+     "traded": 19,
+     "rugs": 1,
+     "mean": -0.0053,
+     "win_traded": 0.3158,
+     "max": 0.4173
+    },
+    "oct11/12": {
+     "scanned": 600001,
+     "npaths": 307,
+     "traded": 16,
+     "rugs": 1,
+     "mean": 0.0017,
+     "win_traded": 0.4375,
+     "max": 0.7201
+    }
+   }
+  },
+  "realistic-jupiter": {
+   "mean": 0.0,
+   "lower95": -0.0032,
+   "pass": false,
+   "mean_net_sol": 1e-06,
+   "per_file": {
+    "oct04/11": {
+     "scanned": 600001,
+     "npaths": 404,
+     "traded": 24,
+     "rugs": 0,
+     "mean": 0.0014,
+     "win_traded": 0.4583,
+     "max": 0.5908
+    },
+    "oct04/12": {
+     "scanned": 600001,
+     "npaths": 364,
+     "traded": 26,
+     "rugs": 1,
+     "mean": -0.0051,
+     "win_traded": 0.3077,
+     "max": 0.4569
+    },
+    "oct04/13": {
+     "scanned": 600001,
+     "npaths": 320,
+     "traded": 27,
+     "rugs": 0,
+     "mean": 0.0065,
+     "win_traded": 0.4444,
+     "max": 0.7243
+    },
+    "oct05/11": {
+     "scanned": 600001,
+     "npaths": 355,
+     "traded": 18,
+     "rugs": 0,
+     "mean": 0.0048,
+     "win_traded": 0.4444,
+     "max": 0.697
+    },
+    "oct05/12": {
+     "scanned": 600001,
+     "npaths": 357,
+     "traded": 27,
+     "rugs": 1,
+     "mean": -0.0025,
+     "win_traded": 0.3333,
+     "max": 0.614
+    },
+    "oct11/11": {
+     "scanned": 600001,
+     "npaths": 330,
+     "traded": 19,
+     "rugs": 1,
+     "mean": -0.0058,
+     "win_traded": 0.3158,
+     "max": 0.4073
+    },
+    "oct11/12": {
+     "scanned": 600001,
+     "npaths": 307,
+     "traded": 16,
+     "rugs": 1,
+     "mean": 0.0012,
+     "win_traded": 0.4375,
+     "max": 0.7101
+    }
+   }
+  }
+ },
+ "caveats": [
+  "7 clusters across 3 days",
+  "rug = -100% on >90% reserve pull (pessimistic)",
+  "replay fills (adverse) but simulated",
+  "paper only"
+ ]
+}

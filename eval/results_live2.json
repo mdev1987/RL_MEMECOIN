@@ -1,0 +1,19 @@
+{
+ "batch": "live 10min, 387k events, 2504 tapes, 156 series",
+ "sim": {
+  "traded": 19,
+  "win": 0.79,
+  "mean_traded": 0.1729,
+  "pnl_sol": 0.16425,
+  "reasons": {
+   "filtered": 15,
+   "too-short": 115,
+   "bad-tick": 7,
+   "hold-end": 14,
+   "take": 2,
+   "stop": 2,
+   "trail": 1
+  }
+ },
+ "caveats": "10-min truncation censors unresolved trades (115 too-short); buys-only series (no sells); rug guard off (no liq); one hour only. Win rate likely biased up."
+}

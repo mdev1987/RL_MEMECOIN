@@ -1,0 +1,63 @@
+{
+ "config": "selective-v1",
+ "size_sol": 0.05,
+ "fee_roundtrip": 0.013,
+ "entry": {
+  "ret10": 0.02,
+  "buy_ratio": 0.55,
+  "dip": -0.08,
+  "liq_sol": 20.0
+ },
+ "exits": {
+  "tp": 0.6,
+  "sl": 0.12,
+  "trail": 0.15
+ },
+ "hours": {
+  "11": {
+   "scanned": 600001,
+   "npaths": 404,
+   "traded": 29,
+   "mean": 0.0065,
+   "median": 0.0,
+   "win_traded": 0.5172,
+   "mean_traded": 0.0903,
+   "max": 0.6054
+  },
+  "12": {
+   "scanned": 600001,
+   "npaths": 364,
+   "traded": 36,
+   "mean": 0.0414,
+   "median": 0.0,
+   "win_traded": 0.4722,
+   "mean_traded": 0.4182,
+   "max": 13.5062
+  },
+  "13": {
+   "scanned": 600001,
+   "npaths": 320,
+   "traded": 38,
+   "mean": 0.0119,
+   "median": 0.0,
+   "win_traded": 0.5,
+   "mean_traded": 0.1,
+   "max": 0.7387
+  }
+ },
+ "G1_by_hour": {
+  "mean": 0.0199,
+  "lower95": 0.0065,
+  "pass": true,
+  "mean_net_sol_per_trade": 0.000995
+ },
+ "no_top_outlier": {
+  "mean": 0.0061,
+  "lower95": 0.0013
+ },
+ "caveats": [
+  "3 clusters only (single day)",
+  "replay fills assumed, no latency/failure model",
+  "paper only"
+ ]
+}

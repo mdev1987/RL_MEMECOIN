@@ -1,0 +1,5 @@
+{"experiment": "selective-v1-locked", "size_sol": 0.05, "entry_lookback": 10,
+ "filter": {"min_ret10": 0.02, "min_buy_ratio": 0.55, "max_dip": -0.08, "min_liq_sol": 20.0},
+ "exits": {"take_profit": 0.6, "stop_loss": 0.12, "trailing": 0.15},
+ "costs": {"fee_bps": 100, "slippage_bps": 25, "tip_lamports": 5000, "roundtrip_fee": 0.013},
+ "splits": "mint-hash 50/50 + hour13 OOS", "seed": 2026}

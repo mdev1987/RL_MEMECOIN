@@ -1,0 +1,231 @@
+{
+ "config": "selective-v1",
+ "size_sol": 0.05,
+ "fee_roundtrip": 0.013,
+ "entry": {
+  "ret10": 0.02,
+  "buy_ratio": 0.55,
+  "dip": -0.08,
+  "liq_sol": 20.0
+ },
+ "exits": {
+  "tp": 0.6,
+  "sl": 0.12,
+  "trail": 0.15
+ },
+ "cost_paths": {
+  "swqos": {
+   "extra_bps": 0,
+   "fixed_sol": 1e-05
+  },
+  "jupiter": {
+   "extra_bps": 50,
+   "fixed_sol": 1e-05
+  },
+  "jito": {
+   "extra_bps": 0,
+   "fixed_sol": 0.001
+  }
+ },
+ "tiers": {
+  "idealized": {
+   "mean": 0.024,
+   "lower95": 0.0077,
+   "pass": true,
+   "mean_net_sol": 0.001198,
+   "per_file": {
+    "oct04/11": {
+     "scanned": 600001,
+     "npaths": 404,
+     "traded": 29,
+     "mean": 0.0065,
+     "win_traded": 0.5172,
+     "max": 0.6054
+    },
+    "oct04/12": {
+     "scanned": 600001,
+     "npaths": 364,
+     "traded": 36,
+     "mean": 0.0414,
+     "win_traded": 0.4722,
+     "max": 13.5062
+    },
+    "oct04/13": {
+     "scanned": 600001,
+     "npaths": 320,
+     "traded": 38,
+     "mean": 0.0119,
+     "win_traded": 0.5,
+     "max": 0.7387
+    },
+    "oct05/11": {
+     "scanned": 600001,
+     "npaths": 355,
+     "traded": 29,
+     "mean": 0.0072,
+     "win_traded": 0.4828,
+     "max": 0.7279
+    },
+    "oct05/12": {
+     "scanned": 600001,
+     "npaths": 357,
+     "traded": 36,
+     "mean": 0.0533,
+     "win_traded": 0.4722,
+     "max": 16.7229
+    }
+   }
+  },
+  "realistic-swqos": {
+   "mean": 0.0116,
+   "lower95": 0.0035,
+   "pass": true,
+   "mean_net_sol": 0.000578,
+   "per_file": {
+    "oct04/11": {
+     "scanned": 600001,
+     "npaths": 404,
+     "traded": 29,
+     "mean": 0.0047,
+     "win_traded": 0.4828,
+     "max": 0.6143
+    },
+    "oct04/12": {
+     "scanned": 600001,
+     "npaths": 364,
+     "traded": 36,
+     "mean": 0.0384,
+     "win_traded": 0.4167,
+     "max": 13.5058
+    },
+    "oct04/13": {
+     "scanned": 600001,
+     "npaths": 320,
+     "traded": 38,
+     "mean": 0.0081,
+     "win_traded": 0.4211,
+     "max": 0.7343
+    },
+    "oct05/11": {
+     "scanned": 600001,
+     "npaths": 355,
+     "traded": 29,
+     "mean": 0.0063,
+     "win_traded": 0.4828,
+     "max": 0.707
+    },
+    "oct05/12": {
+     "scanned": 600001,
+     "npaths": 357,
+     "traded": 36,
+     "mean": 0.0014,
+     "win_traded": 0.3889,
+     "max": 0.8153
+    }
+   }
+  },
+  "realistic-jupiter": {
+   "mean": 0.0106,
+   "lower95": 0.0026,
+   "pass": true,
+   "mean_net_sol": 0.000532,
+   "per_file": {
+    "oct04/11": {
+     "scanned": 600001,
+     "npaths": 404,
+     "traded": 29,
+     "mean": 0.004,
+     "win_traded": 0.4828,
+     "max": 0.6043
+    },
+    "oct04/12": {
+     "scanned": 600001,
+     "npaths": 364,
+     "traded": 36,
+     "mean": 0.0375,
+     "win_traded": 0.3889,
+     "max": 13.4958
+    },
+    "oct04/13": {
+     "scanned": 600001,
+     "npaths": 320,
+     "traded": 38,
+     "mean": 0.0069,
+     "win_traded": 0.3947,
+     "max": 0.7243
+    },
+    "oct05/11": {
+     "scanned": 600001,
+     "npaths": 355,
+     "traded": 29,
+     "mean": 0.0055,
+     "win_traded": 0.4138,
+     "max": 0.697
+    },
+    "oct05/12": {
+     "scanned": 600001,
+     "npaths": 357,
+     "traded": 36,
+     "mean": 0.0004,
+     "win_traded": 0.3611,
+     "max": 0.8053
+    }
+   }
+  },
+  "pessimistic-jito": {
+   "mean": -0.0013,
+   "lower95": -0.0037,
+   "pass": false,
+   "mean_net_sol": -6.5e-05,
+   "per_file": {
+    "oct04/11": {
+     "scanned": 600001,
+     "npaths": 404,
+     "traded": 29,
+     "mean": 0.0019,
+     "win_traded": 0.4483,
+     "max": 0.549
+    },
+    "oct04/12": {
+     "scanned": 600001,
+     "npaths": 364,
+     "traded": 36,
+     "mean": -0.0048,
+     "win_traded": 0.3333,
+     "max": 0.6119
+    },
+    "oct04/13": {
+     "scanned": 600001,
+     "npaths": 320,
+     "traded": 38,
+     "mean": 0.0011,
+     "win_traded": 0.3421,
+     "max": 0.6947
+    },
+    "oct05/11": {
+     "scanned": 600001,
+     "npaths": 355,
+     "traded": 29,
+     "mean": -0.001,
+     "win_traded": 0.2759,
+     "max": 0.6053
+    },
+    "oct05/12": {
+     "scanned": 600001,
+     "npaths": 357,
+     "traded": 36,
+     "mean": -0.004,
+     "win_traded": 0.3611,
+     "max": 0.6403
+    }
+   }
+  }
+ },
+ "adopted": "realistic-swqos (bot default: LATENCY_BARS=1 FAIL_RATE=0.02 COST_PATH=swqos)",
+ "caveats": [
+  "5 clusters across 2 days",
+  "replay fills (adverse, pessimistic) but still simulated",
+  "jito tip floor (0.001 SOL/side) erases edge: venue selection is load-bearing",
+  "paper only"
+ ]
+}

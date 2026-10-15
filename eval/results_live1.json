@@ -1,0 +1,7 @@
+{
+ "batch": "03 UTC live, 7min, 319k events",
+ "tapes": 2185,
+ "v2_pass": 124,
+ "breadth_frac_ret_gt2": 0.1364,
+ "note": "breadth 0.136 inside replay good/bad band (0.089-0.179): does not discriminate, consistent with in-sample finding"
+}

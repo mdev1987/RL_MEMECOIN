@@ -1,0 +1,36 @@
+{
+ "config": "selective-v2 frozen, no tuning knobs",
+ "files": {
+  "oct12_11": {
+   "mean": 0.00121,
+   "traded": 15,
+   "win": 0.6
+  },
+  "oct13_11": {
+   "mean": 0.00614,
+   "traded": 12,
+   "win": 0.58
+  },
+  "oct07_11": {
+   "mean": 0.00103,
+   "traded": 11,
+   "win": 0.64
+  },
+  "oct09_11": {
+   "mean": -0.00077,
+   "traded": 15,
+   "win": 0.53
+  },
+  "oct04_11": {
+   "mean": -0.00024,
+   "traded": 11,
+   "win": 0.73
+  }
+ },
+ "oos_g1_round2": {
+  "mean": 0.00137,
+  "lower95": -0.00023,
+  "pass": false
+ },
+ "cumulative_fresh": "8 days (oct04_11,06,07,08,09,10,12,13): 5/8 positive; with in-sample 7: 12/15 positive. Edge +0.1-0.2%/path persistent but day-variance keeps every multi-day lb <= 0."
+}

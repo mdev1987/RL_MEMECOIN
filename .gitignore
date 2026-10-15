@@ -1,0 +1,23 @@
+# secrets
+.env
+.env.*
+!.env.example
+
+# data / docs excluded by request
+doc/
+replay_zst
+replay_zst/
+*.zst
+# paper state + captures: machine-local, never commit
+data/*.json
+data/*.jsonl
+data/*.log
+
+# notebooks checkpoints / large artifacts
+.ipynb_checkpoints/
+__pycache__/
+*.pyc
+.venv/
+.opencode/
+*.npz
+/tmp/

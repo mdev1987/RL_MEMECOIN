@@ -1,0 +1,70 @@
+{
+ "config": "selective-v2 (0.05,0.60,-0.05) swqos realistic",
+ "per_file": {
+  "11.jsonl.zst": {
+   "scanned": "scanned=600001",
+   "npaths": "npaths=404",
+   "traded": "tr=11",
+   "mean": "mean=+0.00129",
+   "mean_traded": "mean_tr=+0.0474",
+   "win": "win=0.55",
+   "max": "max=+0.601"
+  },
+  "12.jsonl.zst": {
+   "scanned": "scanned=600001",
+   "npaths": "npaths=364",
+   "traded": "tr=16",
+   "mean": "mean=-0.00249",
+   "mean_traded": "mean_tr=-0.0567",
+   "win": "win=0.19",
+   "max": "max=+0.467"
+  },
+  "13.jsonl.zst": {
+   "scanned": "scanned=600001",
+   "npaths": "npaths=320",
+   "traded": "tr=18",
+   "mean": "mean=+0.00603",
+   "mean_traded": "mean_tr=+0.1072",
+   "win": "win=0.39",
+   "max": "max=+0.734"
+  },
+  "oct05_11.jsonl.zst": {
+   "scanned": "scanned=600001",
+   "npaths": "npaths=355",
+   "traded": "tr=7",
+   "mean": "mean=+0.00452",
+   "mean_traded": "mean_tr=+0.2292",
+   "win": "win=0.57",
+   "max": "max=+0.707"
+  },
+  "oct05_12.jsonl.zst": {
+   "scanned": "scanned=600001",
+   "npaths": "npaths=357",
+   "traded": "tr=12",
+   "mean": "mean=+0.00463",
+   "mean_traded": "mean_tr=+0.1377",
+   "win": "win=0.50",
+   "max": "max=+0.620"
+  },
+  "oct11_11.jsonl.zst": {
+   "scanned": "scanned=600001",
+   "npaths": "npaths=330",
+   "traded": "tr=12",
+   "mean": "mean=-0.00233",
+   "mean_traded": "mean_tr=-0.0640",
+   "win": "win=0.33",
+   "max": "max=+0.173"
+  },
+  "oct11_12.jsonl.zst": {
+   "scanned": "scanned=600001",
+   "npaths": "npaths=307",
+   "traded": "tr=12",
+   "mean": "mean=+0.00433",
+   "mean_traded": "mean_tr=+0.1107",
+   "win": "win=0.42",
+   "max": "max=+0.720"
+  }
+ },
+ "gate_600k": "G1-600k {'mean': 0.002235065814331488, 'lower95': -0.0002752131380449025, 'pass': False}",
+ "note": "200k G1 PASS (lb +0.00071); 600k G1 FAIL (lb -0.00028). 5/7 files positive; 12 + oct11_11 negative. Not profitable-robust yet."
+}

@@ -1,0 +1,19 @@
+{
+ "batch": "live 40min, 1.29M events, 6154 tapes, 434 series, 30-min windows",
+ "sim": {
+  "traded": 90,
+  "win": 0.61,
+  "mean_traded": 0.0557,
+  "pnl_sol": 0.25071,
+  "reasons": {
+   "filtered": 44,
+   "stop": 14,
+   "trail": 23,
+   "bad-tick": 26,
+   "too-short": 274,
+   "take": 6,
+   "hold-end": 47
+  }
+ },
+ "caveats": "buys-only series; rug guard off; single 40-min session; win normalized 79%->61% as truncation bias fell, as predicted"
+}

@@ -1,0 +1,36 @@
+{
+ "config": "selective-v2 frozen, no tuning knobs",
+ "files": {
+  "oct12_11": {
+   "mean": 0.00121,
+   "traded": 15,
+   "win": 0.6
+  },
+  "oct13_11": {
+   "mean": 0.00614,
+   "traded": 12,
+   "win": 0.58
+  },
+  "oct06_12": {
+   "mean": -0.00419,
+   "traded": 22,
+   "win": 0.41
+  },
+  "oct07_12": {
+   "mean": -0.00076,
+   "traded": 14,
+   "win": 0.5
+  },
+  "oct08_12": {
+   "mean": -0.00288,
+   "traded": 7,
+   "win": 0.43
+  }
+ },
+ "oos_g1_round3": {
+  "mean": -0.0002,
+  "lower95": -0.00299,
+  "pass": false
+ },
+ "cumulative_fresh": "11 day-hours: 5/11 positive. Edge does not replicate; round-3 mean itself negative. Strategy not profitable."
+}

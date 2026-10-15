@@ -1,0 +1,42 @@
+version = 1
+
+# RL memecoin paper-trading bot — this repo (rl-memecoin).
+# Loop: bot/paper_loop.py loads .env, scans replay, sends Telegram open/close
+# cards via notifier.py (pro markdown + icons). Paper-only: no signing, no broadcasts.
+# Telegram alerts if TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID are set, else console-only.
+# Apply with: oxmgr apply ./oxfile.toml   (from this directory)
+# Logs with:  oxmgr logs meme-paper -f
+
+[[apps]]
+name = "meme-paper"
+command = "/home/mdev/Programming/RL_MEMECOIN/.venv/bin/python -u -m bot.paper_loop"
+cwd = "/home/mdev/Programming/RL_MEMECOIN"
+restart_policy = "always"
+max_restarts = 100
+# Stop after 5 crash-restarts inside 5 minutes: a persistent config error
+# must error-state, not hot-loop. 0 would disable this protection entirely.
+crash_restart_limit = 5
+restart_delay_secs = 10
+stop_signal = "SIGTERM"
+stop_timeout_secs = 20
+# No health_cmd: oxmgr 0.5.0's health executor is broken server-side
+# (even health_cmd="/usr/bin/true" reports "No such file or directory").
+# Liveness check manually: paper loop logs "cycle done" every pass.
+unified_logs = true
+
+[apps.env]
+PATH = "/home/mdev/Programming/RL_MEMECOIN/.venv/bin:/usr/local/bin:/usr/bin:/bin"
+HOME = "/home/mdev"
+POLL_SECS = "300"
+SIZE_SOL = "0.05"
+START_BALANCE_SOL = "1.0"
+REPLAY_PATH = "/home/mdev/Programming/RL_MEMECOIN/data/12.jsonl.zst"
+REPLAY_PATHS = "/home/mdev/Programming/RL_MEMECOIN/data/11.jsonl.zst:/home/mdev/Programming/RL_MEMECOIN/data/12.jsonl.zst:/home/mdev/Programming/RL_MEMECOIN/data/13.jsonl.zst:/home/mdev/Programming/RL_MEMECOIN/data/oct05_11.jsonl.zst:/home/mdev/Programming/RL_MEMECOIN/data/oct05_12.jsonl.zst:/home/mdev/Programming/RL_MEMECOIN/data/oct11_11.jsonl.zst:/home/mdev/Programming/RL_MEMECOIN/data/oct11_12.jsonl.zst:/home/mdev/Programming/RL_MEMECOIN/data/oct12_11.jsonl.zst:/home/mdev/Programming/RL_MEMECOIN/data/oct13_11.jsonl.zst"
+COST_PATH = "swqos"
+LATENCY_BARS = "1"
+FAIL_RATE = "0.02"
+ENTRY_MIN_RET = "0.05"
+ENTRY_MIN_BUY = "0.60"
+ENTRY_MAX_DIP = "-0.05"
+MIN_LIQ_SOL = "20.0"
+PYTHONUNBUFFERED = "1"

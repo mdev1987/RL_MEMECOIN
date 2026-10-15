@@ -1,0 +1,16 @@
+{
+ "config": "selective-v2 (0.05,0.60,-0.05) TP60 SL12 trail15 swqos, 600k lines/file, liq-gated universe only",
+ "per_path_liquid": {
+  "mean": 0.06278,
+  "lower95": -0.00745,
+  "pass": false
+ },
+ "per_trade": {
+  "mean": 0.06372,
+  "lower95": -0.0078,
+  "pass": false,
+  "trades": 86,
+  "mean_net_sol": 0.003118
+ },
+ "note": "Even on spec-literal per-trade basis G1 fails: +0.0031 SOL/trade average but day-cluster variance (2/7 files negative) keeps lower95 below zero with only 7 clusters. Matches v3 per-path verdict."
+}

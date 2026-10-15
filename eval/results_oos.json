@@ -1,0 +1,27 @@
+{
+ "config": "selective-v2 frozen (0.05,0.60,-0.05) TP60 SL12 trail15 swqos, locked before download, no tuning knobs",
+ "files": {
+  "oct12_11.jsonl.zst": {
+   "scanned": 600001,
+   "npaths": 310,
+   "traded": 15,
+   "mean": 0.00121,
+   "mean_traded": 0.025,
+   "win": 0.6
+  },
+  "oct13_11.jsonl.zst": {
+   "scanned": 600001,
+   "npaths": 285,
+   "traded": 12,
+   "mean": 0.00614,
+   "mean_traded": 0.1459,
+   "win": 0.58
+  }
+ },
+ "oos_g1": {
+  "mean": 0.00366,
+  "lower95": 0.00121,
+  "pass": true
+ },
+ "caveats": "2 clusters only (thin but genuine OOS); in-sample 600k per-path G1 still fails (thin edge, 5/7 positive)"
+}

@@ -1,0 +1,21 @@
+{
+ "batch": "live 30min hr14 (hypothesized bleed zone), 6933 tapes, 487 series",
+ "sim": {
+  "traded": 93,
+  "win": 0.68,
+  "mean_traded": 0.1094,
+  "pnl_sol": 0.50861,
+  "reasons": {
+   "filtered": 40,
+   "too-short": 337,
+   "bad-tick": 17,
+   "stop": 10,
+   "hold-end": 48,
+   "take": 14,
+   "trail": 21
+  }
+ },
+ "breadth_gt2": 0.153,
+ "finding": "14-20 UTC bleed does NOT replicate for v2: hour 14 strongly positive. rl_trading pocket was strategy-specific.",
+ "cumulative_live": "302 trades over 5 sessions, all positive"
+}

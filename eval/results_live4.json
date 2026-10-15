@@ -1,0 +1,20 @@
+{
+ "batch": "live 30min hrs13-14, 6758 tapes, 460 series",
+ "sim": {
+  "traded": 100,
+  "win": 0.63,
+  "mean_traded": 0.118,
+  "pnl_sol": 0.59019,
+  "reasons": {
+   "filtered": 39,
+   "stop": 14,
+   "hold-end": 41,
+   "trail": 29,
+   "bad-tick": 13,
+   "too-short": 308,
+   "take": 16
+  }
+ },
+ "breadth_gt2": 0.153,
+ "cumulative_live": "209 trades over 3 batches, all positive; replay G1 variance remains the pessimistic bound"
+}
