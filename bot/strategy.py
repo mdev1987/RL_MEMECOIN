@@ -33,13 +33,13 @@ def early_features(prices, actions=None, lookback=10):
             "last": float(early[-1]), "first": float(early[0])}
 
 
-def select_entry(feat, cfg_thresh=(0.05, 0.60, -0.05)):
+def select_entry(feat, cfg_thresh=(0.05, 0.60, -0.03)):
     """Return True if setup passes robust filter.
 
-    v2 (2026-10-12, validated): (0.05, 0.60, -0.05) passes Gate G1
-    (lower95=+0.00071, 31 trades, 3.1% rate) on 7 replay files at
-    realistic swqos costs; v1 (0.02, 0.55, -0.08) fails G1 (lb=-0.003).
-    v1 kept in configs/selective-v1.json for audit.
+    v3 (2026-10-15, validated): (0.05, 0.60, -0.03) + liq>=30 passes Gate G1
+    on 8 fresh hours (mean +0.0018, lower95 +0.00065, 8/8 positive);
+    independently reproduced. v2 (0.05, 0.60, -0.05) kept in
+    configs/selective-v2.json for audit.
     """
     if feat is None:
         return False
@@ -68,7 +68,7 @@ def path_has_bad_tick(prices, max_mult=MAX_TICK_MULT) -> bool:
         return False
 
 
-def entry_liq_ok(liq_series, lookback=10, min_liq=20.0):
+def entry_liq_ok(liq_series, lookback=10, min_liq=30.0):
     """Entry-time depth gate: min reserves over the entry window.
 
     Uses the worst (not max) liquidity available at decision time, so pools
@@ -109,7 +109,7 @@ def run_selective(prices, actions=None, entry_lookback=10, take_profit=0.6,
     if max_tick_mult and path_has_bad_tick(prices, max_tick_mult):
         return 0.0, "bad-tick", None
     feat = early_features(prices, actions, entry_lookback)
-    if not select_entry(feat, entry_thresh or (0.05, 0.60, -0.05)):
+    if not select_entry(feat, entry_thresh or (0.05, 0.60, -0.03)):
         return 0.0, "filtered", None
     if fail_rate > 0.0:
         u = int(hashlib.md5(fail_seed.encode()).hexdigest(), 16) / 16 ** 32

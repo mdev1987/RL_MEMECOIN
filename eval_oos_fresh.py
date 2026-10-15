@@ -10,7 +10,8 @@ from bot.replay_eval import load_paths
 from bot.strategy import run_selective, COST_PATHS
 from eval.gate import gate_g1
 
-TH = (0.05, 0.60, -0.05)
+TH = (0.05, 0.60, -0.03)
+MIN_LIQ = 30.0
 C = COST_PATHS["swqos"]
 KW = dict(take_profit=0.6, stop_loss=0.12, trailing=0.15, size_sol=0.05,
           latency_bars=1, fail_rate=0.02, extra_bps=C["extra_bps"],
@@ -22,7 +23,7 @@ def eval_file(path, max_lines=600000):
     vals = []
     for d in paths:
         ls = d.get("liq_series") or [d.get("liq", 0.0)] * 11
-        if len(ls) >= 11 and min(ls[:11]) < 20.0:
+        if len(ls) >= 11 and min(ls[:11]) < MIN_LIQ:
             vals.append(0.0)
             continue
         r, why, _ = run_selective(d["prices"], d["actions"], fail_seed=d.get("mint", ""),

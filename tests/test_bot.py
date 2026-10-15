@@ -155,7 +155,7 @@ def test_evaluate_runs():
     from bot.replay_eval import evaluate
     import numpy as np
     up = list(1.0 * (1 + 0.01) ** np.arange(60))
-    paths = [{"mint": "m1", "pool": "p", "prices": up, "actions": ["buy"] * 60, "liq": 25.0},
+    paths = [{"mint": "m1", "pool": "p", "prices": up, "actions": ["buy"] * 60, "liq": 35.0},
              {"mint": "m2", "pool": "p", "prices": [1.0] * 60, "actions": ["sell"] * 60, "liq": 5.0}]
     m = evaluate(paths)
     assert m["n"] == 2 and m["traded"] == 1, m
@@ -249,9 +249,10 @@ def test_wallet_day_rollover():
 
 def test_entry_liq_min_gate():
     from bot.strategy import entry_liq_ok
-    assert entry_liq_ok([25.0] * 11)
-    assert not entry_liq_ok([25.0] * 10 + [5.0])  # max passes, min fails
-    assert not entry_liq_ok([25.0] * 5)
+    assert entry_liq_ok([35.0] * 11)
+    assert not entry_liq_ok([35.0] * 10 + [5.0])  # max passes, min fails
+    assert not entry_liq_ok([25.0] * 11)  # v3 floor is 30 SOL
+    assert not entry_liq_ok([35.0] * 5)
 
 
 def test_rug_total_loss():
