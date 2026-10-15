@@ -42,9 +42,9 @@ FAIL_RATE = float(os.environ.get("FAIL_RATE", "0.02"))
 # Validated v2 entry filter (G1 pass 2026-10-12); overridable for research.
 ENTRY_MIN_RET = float(os.environ.get("ENTRY_MIN_RET", "0.05"))
 ENTRY_MIN_BUY = float(os.environ.get("ENTRY_MIN_BUY", "0.60"))
-ENTRY_MAX_DIP = float(os.environ.get("ENTRY_MAX_DIP", "-0.05"))
+ENTRY_MAX_DIP = float(os.environ.get("ENTRY_MAX_DIP", "-0.03"))
 ENTRY_THRESH = (ENTRY_MIN_RET, ENTRY_MIN_BUY, ENTRY_MAX_DIP)
-MIN_LIQ_SOL = float(os.environ.get("MIN_LIQ_SOL", "20.0"))
+MIN_LIQ_SOL = float(os.environ.get("MIN_LIQ_SOL", "30.0"))
 # Forward-validation ledger: every paper decision lands here as JSONL.
 LEDGER = os.environ.get("LEDGER_PATH",
                         str(Path(__file__).resolve().parents[1] / "data" / "decisions.jsonl"))

@@ -1,0 +1,51 @@
+{
+ "config": "selective-v3 (0.05,0.60,-0.03) liq>=30 TP60 SL12 trail15 swqos realistic, 600k lines/file",
+ "files": {
+  "2026-10-03/13": {
+   "traded": 11,
+   "mean": 0.00112,
+   "win": 0.55
+  },
+  "2026-10-03/14": {
+   "traded": 13,
+   "mean": 0.00022,
+   "win": 0.38
+  },
+  "2026-10-04/13": {
+   "traded": 17,
+   "mean": 0.00629,
+   "win": 0.41
+  },
+  "2026-10-04/14": {
+   "traded": 6,
+   "mean": 0.00035,
+   "win": 0.17
+  },
+  "2026-10-05/13": {
+   "traded": 12,
+   "mean": 0.00338,
+   "win": 0.58
+  },
+  "2026-10-05/14": {
+   "traded": 15,
+   "mean": 0.00013,
+   "win": 0.53
+  },
+  "2026-10-03/15": {
+   "traded": 6,
+   "mean": 0.00073,
+   "win": 0.33
+  },
+  "2026-10-04/15": {
+   "traded": 15,
+   "mean": 0.00287,
+   "win": 0.4
+  }
+ },
+ "g1": {
+  "mean": 0.0018,
+  "lower95": 0.00065,
+  "pass": true
+ },
+ "note": "8 fresh hours 13/14/15 UTC Oct03-05, never used for tuning; 8/8 positive; v2 BASE also passes on same 8 (mean +0.00135/lb +0.00012) but v3 higher mean and lb; costs pessimistic (worst-fill latency 1bar, 2pct fail, swqos); Aug09 excluded as stale regime"
+}
