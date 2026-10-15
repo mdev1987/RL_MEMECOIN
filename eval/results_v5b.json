@@ -1,0 +1,31 @@
+{
+ "config": "selective-v3 frozen (no tuning since freeze)",
+ "files": {
+  "v3b_1006_13": {
+   "mean": -0.00046,
+   "traded": 9,
+   "win": 0.44
+  },
+  "v3b_1007_13": {
+   "mean": -0.00066,
+   "traded": 7,
+   "win": 0.57
+  },
+  "v3b_1009_13": {
+   "mean": 0.00036,
+   "traded": 7,
+   "win": 0.43
+  },
+  "v3b_1010_13": {
+   "mean": 0.00039,
+   "traded": 8,
+   "win": 0.5
+  }
+ },
+ "gate4": {
+  "mean": -8e-05,
+  "lower95": -0.00056,
+  "pass": false
+ },
+ "cumulative_v3_fresh": "12 day-hours: 10/12 positive; gates split (8-file PASS lb +0.00063, 4-file FAIL mean negative). Edge concentrates in runner days; quiet days bleed slightly."
+}
