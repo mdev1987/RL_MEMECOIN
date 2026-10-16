@@ -868,3 +868,12 @@ def test_shadow_sweep_due():
     # hold-end wins over stale on old positions
     assert sweep_due({"t": now - 4000, "last_ts": (now - 9999) * 1000},
                      now) == "hold-end"
+
+
+def test_rug_give_up():
+    from bot import live
+    assert not live.rug_give_up(0)
+    assert not live.rug_give_up(4)
+    assert live.rug_give_up(5)
+    assert live.rug_give_up(99)
+    assert live.rug_give_up(1, max_misses=1)

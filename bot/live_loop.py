@@ -181,10 +181,36 @@ def main(require_live_flag: bool = True) -> None:
             except L.NoQuote as exc:
                 # routine venue miss (illiquid mint): skip like paper's
                 # `filtered` — counted, never alerted; cool down retries.
+                # After repeated misses the exit is unclosable (dead mint):
+                # book the rug so the corpse can't clog the book.
                 skip["live:no-quote"] += 1
                 poss[mint]["cool_until"] = time.time() + 60.0
+                misses = poss[mint].get("misses", 0) + 1
+                poss[mint]["misses"] = misses
                 save_positions(poss)
                 log.info("LIVE skip no-quote %s: %s", mint[:8], exc)
+                if L.rug_give_up(misses):
+                    # Dead mint, no venue will quote it: economically zero.
+                    # Book the rug (mirrors sim rug=-1.0) and free the slot.
+                    log.warning("LIVE rug-close %s after %d misses",
+                                mint[:8], misses)
+                    pnl = -poss[mint]["size"]
+                    w.apply_close(mint, pnl)
+                    ledger_append(LEDGER, ledger_row(
+                        file="live", mint=mint, reason="live-rug",
+                        r_net=-1.0, pnl_sol=pnl,
+                        balance_after=w.s.balance, wins=w.s.wins,
+                        losses=w.s.losses))
+                    ntf.send_close(
+                        ca=mint, name=mint[:12], reason="RUG", mult=0.0,
+                        pnl_sol=pnl, hold_s=time.time() - poss[mint]["t"],
+                        entry_px=poss[mint].get("entry_px"), exit_px=0.0,
+                        size_sol=poss[mint]["size"],
+                        balance_before=w.s.balance - pnl,
+                        balance_after=w.s.balance, win_rate=w.s.win_rate,
+                        dex="jupiter", via="live-rug")
+                    del poss[mint]
+                    save_positions(poss)
             except Exception as exc:
                 log.error("LIVE SELL FAILED %s: %s", mint[:8], exc)
                 ntf.send_alert("🔴 LIVE SELL FAILED", f"{mint[:8]}: {exc}")

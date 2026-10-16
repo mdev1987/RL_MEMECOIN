@@ -75,12 +75,22 @@ def order_throttled() -> bool:
     """
     global _last_order_ts
     import time
-    gap = float(os.environ.get("JUP_MIN_INTERVAL_S", "1.5"))
+    gap = float(os.environ.get("JUP_MIN_INTERVAL_S", "0.5"))
     now = time.monotonic()
     if now - _last_order_ts < gap:
         return True
     _last_order_ts = now
     return False
+
+
+def rug_give_up(misses: int, max_misses: int = 5) -> bool:
+    """Give up on an unclosable exit (dead mint, no Jupiter route).
+
+    Without this, corpses clog the book forever (MAXOPEN reached, no new
+    entries) while the position is economically already zero. Honest
+    handling mirrors the sim's rug=-1.0: book the loss, free the slot.
+    """
+    return misses >= max_misses
 
 
 def _env_flag(name: str) -> bool:

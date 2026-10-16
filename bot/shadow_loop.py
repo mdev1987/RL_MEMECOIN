@@ -179,12 +179,19 @@ def main() -> None:
                             m, SOL, p["qty_base"], p["size"],
                             shadow=True)
                         p.pop("cool_until", None)
+                        p["misses"] = 0
                         log.info("SHADOW exit quote out=%s",
                                  rc.out_amount)
                     except L.NoQuote as exc:
                         log.info("SHADOW exit no-quote %s: %s",
                                  m[:8], exc)
                         p["cool_until"] = time.time() + 60.0
+                        p["misses"] = p.get("misses", 0) + 1
+                        if L.rug_give_up(p["misses"]):
+                            log.warning(
+                                "SHADOW rug-close %s after %d misses",
+                                m[:8], p["misses"])
+                            close_position(m, "rug", mark)
                         continue
                     except Exception as exc:
                         log.warning("SHADOW exit sign failed %s: %s",
@@ -248,6 +255,10 @@ def main() -> None:
                     for mk, p in list(poss.items()):
                         why = sweep_due(p, now)
                         if why is None:
+                            _lp = p.get("last_px", 0.0) * p["qty_tokens"]
+                            log.info("SHADOW hold %s rr=%.3f peak=%.5f age=%.0fs",
+                                     mk[:8], _lp / p["size"] if p["size"] else 0,
+                                     p.get("peak", 0.0), now - p["t"])
                             continue
                         mark = p.get("last_px", 0.0) * p["qty_tokens"]
                         if mark <= 0:
@@ -261,6 +272,12 @@ def main() -> None:
                         except L.NoQuote as exc:
                             log.info("SHADOW sweep no-quote %s: %s",
                                      mk[:8], exc)
+                            p["misses"] = p.get("misses", 0) + 1
+                            if L.rug_give_up(p["misses"]):
+                                log.warning(
+                                    "SHADOW rug-close %s after %d misses",
+                                    mk[:8], p["misses"])
+                                close_position(mk, "rug", mark)
                             continue
                         except Exception as exc:
                             log.warning("SHADOW sweep sign failed %s: %s",
