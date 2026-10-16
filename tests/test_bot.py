@@ -655,3 +655,39 @@ def test_jup_fmt_uses_price_impact_points():
     line = jup.fmt_quote({"outAmount": "7", "priceImpact": -0.1,
                           "route": [(100, "X")]}, "sell")
     assert "-0.1%" in line and "priceImpactPct" not in line
+
+
+def test_live_order_param_plumbing():
+    import os
+    from unittest.mock import patch
+    from bot import live
+
+    class _R:
+        ok = True
+
+        def json(self):
+            return {"outAmount": "1", "routePlan": []}
+
+    with patch.dict(os.environ, {"JUPITER_API_KEY": "x"}):
+        with patch("bot.live.requests.get", return_value=_R()) as g:
+            live.get_order("A", "B", 100, "T", slippage_bps="auto",
+                           jito_tip_lamports=0)
+            _, kw = g.call_args
+            assert "slippageBps" not in kw["params"], kw
+            assert "jitoTipLamports" not in kw["params"], kw
+        with patch("bot.live.requests.get", return_value=_R()) as g:
+            live.get_order("A", "B", 100, "T", slippage_bps=100,
+                           jito_tip_lamports=1000)
+            _, kw = g.call_args
+            assert kw["params"]["slippageBps"] == "100", kw
+            assert kw["params"]["jitoTipLamports"] == "1000", kw
+
+
+def test_live_refuses_v1():
+    from bot import live
+    o = _live_order(transactionVersion=1)
+    ok, why = live.check_guards(o, "TAKER", 1.0)
+    assert not ok and "v1" in why, why
+    o = _live_order(transactionVersion=0)
+    ok, _ = live.check_guards(o, "TAKER", 1.0)
+    assert ok

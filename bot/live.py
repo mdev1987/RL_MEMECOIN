@@ -14,6 +14,11 @@ Live guards (all fail-closed, checked before AND after signing):
 - no gasless: signatureFeePayer must equal taker.
 - fee cap: prioritizationFeeLamports <= LIVE_MAX_PRIO_LAMPORTS (default 100_000).
 - error codes mapped to retryable/fatal (docs: aggregator -1000s, RFQ -2000s).
+
+Deliberately out: RTSE-auto is opt-in (LIVE_SLIPPAGE_BPS=auto omits the
+param; default fixed 100bps suits memecoin exits), Jito tips default off
+(LIVE_JITO_TIP_LAMPORTS, edge-killer at size), v1 transactions refused
+(signer path is v0-exercised), CPI (no onchain program exists).
 """
 from __future__ import annotations
 import base64
@@ -86,14 +91,24 @@ def _api_key() -> str:
 
 
 def get_order(input_mint: str, output_mint: str, amount_base: int,
-              taker: str, slippage_bps: int = 100,
+              taker: str, slippage_bps: int | str = 100,
+              jito_tip_lamports: int = 0,
               timeout: float = 20.0) -> dict:
-    """Read-only /order WITH taker (returns transaction + requestId)."""
+    """Read-only /order WITH taker (returns transaction + requestId).
+
+    slippage_bps="auto" omits the param for RTSE-automatic; a number
+    overrides with a fixed value (better for memecoin exits).
+    jito_tip_lamports>0 passes a Jito tip (default 0 = off: tips are
+    proven edge-killers at small size).
+    """
+    params = {"inputMint": input_mint, "outputMint": output_mint,
+              "amount": str(int(amount_base)), "taker": taker}
+    if not (isinstance(slippage_bps, str) and slippage_bps == "auto"):
+        params["slippageBps"] = str(int(slippage_bps))
+    if int(jito_tip_lamports or 0) > 0:
+        params["jitoTipLamports"] = str(int(jito_tip_lamports))
     r = requests.get(
-        f"{BASE}/order",
-        params={"inputMint": input_mint, "outputMint": output_mint,
-                "amount": str(int(amount_base)), "taker": taker,
-                "slippageBps": str(int(slippage_bps))},
+        f"{BASE}/order", params=params,
         headers={"x-api-key": _api_key()}, timeout=timeout)
     if not r.ok:
         raise RuntimeError(f"order HTTP {r.status_code}: {r.text[:200]}")
@@ -128,6 +143,10 @@ def check_guards(o: dict, taker: str, max_sol: float) -> tuple[bool, str]:
         if not o.get("transaction"):
             return False, (f"no transaction "
                            f"(router={o.get('router')} code={o.get('errorCode')})")
+        # v1 transactions are never requested (ceiling "0") and the local
+        # solders path is v0-exercised only: refuse anything else outright.
+        if int(o.get("transactionVersion", 0)) != 0:
+            return False, "v1 transaction unsupported by signer path"
     except Exception as exc:
         return False, f"guard parse: {exc}"
     return True, "ok"
@@ -192,8 +211,10 @@ def place_order(input_mint: str, output_mint: str, amount_base: int,
         raise RuntimeError(f"size {size_sol} over LIVE_MAX_SOL {max_sol}")
     kp = _load_keypair()
     taker = str(kp.pubkey())
-    slippage = int(os.environ.get("LIVE_SLIPPAGE_BPS", "100"))
-    o = get_order(input_mint, output_mint, amount_base, taker, slippage)
+    slippage = os.environ.get("LIVE_SLIPPAGE_BPS", "100")
+    slippage = "auto" if slippage == "auto" else int(slippage)
+    tip = int(os.environ.get("LIVE_JITO_TIP_LAMPORTS", "0") or 0)
+    o = get_order(input_mint, output_mint, amount_base, taker, slippage, tip)
     ok, why = check_guards(o, taker, max_sol)
     if not ok:
         raise RuntimeError(f"guard: {why}")
