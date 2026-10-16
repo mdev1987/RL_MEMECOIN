@@ -94,6 +94,11 @@ def main() -> None:
     last_prune = time.time()
 
     def close_position(mint: str, why: str, mark: float) -> None:
+        if why == "rug":
+            # Unclosable exit (no venue quotes the mint): zero realizable
+            # value. NEVER the last print, which may be stale-high and
+            # would book fantasy profit (seen live: +491x on a corpse).
+            mark = 0.0
         p = poss.pop(mint)
         pnl = mark - p["size"]
         halted = w.apply_close(mint, pnl)
@@ -105,7 +110,8 @@ def main() -> None:
         ntf.send_close(
             ca=mint, name=mint[:12],
             reason="TP" if why == "take" else ("STOP" if why == "stop"
-                    else ("TRAIL" if why == "trail" else "TIME")),
+                    else ("TRAIL" if why == "trail"
+                          else ("RUG" if why == "rug" else "TIME"))),
             mult=mark / p["size"] if p["size"] > 0 else 1.0,
             pnl_sol=pnl, hold_s=time.time() - p["t"],
             entry_px=p.get("entry_px"), exit_px=mark, size_sol=p["size"],
@@ -191,7 +197,9 @@ def main() -> None:
                             log.warning(
                                 "SHADOW rug-close %s after %d misses",
                                 m[:8], p["misses"])
-                            close_position(m, "rug", mark)
+                            close_position(m, "rug", 0.0)  # dead mint:
+                            # no venue quotes it, so it is worth zero, not
+                            # the last (possibly stale-high) print
                         continue
                     except Exception as exc:
                         log.warning("SHADOW exit sign failed %s: %s",
@@ -277,7 +285,8 @@ def main() -> None:
                                 log.warning(
                                     "SHADOW rug-close %s after %d misses",
                                     mk[:8], p["misses"])
-                                close_position(mk, "rug", mark)
+                                close_position(mk, "rug", 0.0)  # as above:
+                                # unclosable exit means zero realizable value
                             continue
                         except Exception as exc:
                             log.warning("SHADOW sweep sign failed %s: %s",
