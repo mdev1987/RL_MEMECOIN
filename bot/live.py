@@ -80,12 +80,20 @@ def killed() -> bool:
 
 
 def _load_keypair():
-    """Live key ONLY from .env.signer (never .env). Raises if missing."""
+    """Live key from .env.signer (BS58_PRIVATE_KEY) or .env (PRIVATE_KEY).
+
+    Either name works; .env.signer wins when both are set (least privilege:
+    paper daemons need never see it, though they share .env today).
+    Raises if neither is present.
+    """
     from dotenv import load_dotenv
     load_dotenv(REPO / ".env.signer")
     b58 = os.environ.get("BS58_PRIVATE_KEY", "").strip()
     if not b58:
-        raise RuntimeError("BS58_PRIVATE_KEY missing in .env.signer")
+        load_dotenv(REPO / ".env")
+        b58 = os.environ.get("PRIVATE_KEY", "").strip()
+    if not b58:
+        raise RuntimeError("no signing key (BS58_PRIVATE_KEY/.env.signer or PRIVATE_KEY/.env)")
     from solders.keypair import Keypair
     B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
     n = 0

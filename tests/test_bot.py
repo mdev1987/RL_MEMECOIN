@@ -650,8 +650,7 @@ def test_live_receipt_actuals():
             assert rc.total_out == "8990000"
 
 
-def test_jup_fmt_uses_price_impact_points():
-    from bot import jup
+def test_jup_fmt_uses_price_impact_points():    from bot import jup
     line = jup.fmt_quote({"outAmount": "7", "priceImpact": -0.1,
                           "route": [(100, "X")]}, "sell")
     assert "-0.1%" in line and "priceImpactPct" not in line
@@ -751,3 +750,35 @@ def test_live_refuses_v1():
     o = _live_order(transactionVersion=0)
     ok, _ = live.check_guards(o, "TAKER", 1.0)
     assert ok
+
+
+def test_live_key_names():
+    import os
+    from unittest.mock import patch
+    from bot import live
+    # neither name -> clear error (no network touched)
+    with patch.dict(os.environ, {}, clear=False):
+        os.environ.pop("BS58_PRIVATE_KEY", None)
+        os.environ.pop("PRIVATE_KEY", None)
+        try:
+            live._load_keypair()
+            raise SystemExit("must raise")
+        except RuntimeError as e:
+            assert "BS58_PRIVATE_KEY" in str(e) and "PRIVATE_KEY" in str(e)
+    # .env.signer name wins when both present (no network touched)
+    from solders.keypair import Keypair
+    B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+
+    def _b58(raw: bytes) -> str:
+        n = int.from_bytes(raw, "big")
+        s = ""
+        while n > 0:
+            n, r = divmod(n, 58)
+            s = B58[r] + s
+        return s or B58[0]
+
+    raw = bytes(Keypair())
+    with patch.dict(os.environ, {"BS58_PRIVATE_KEY": _b58(raw),
+                                 "PRIVATE_KEY": "bogus-not-valid"}):
+        kp = live._load_keypair()
+        assert str(kp.pubkey()) == str(Keypair.from_bytes(raw).pubkey())
