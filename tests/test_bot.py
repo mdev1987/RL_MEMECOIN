@@ -657,6 +657,66 @@ def test_jup_fmt_uses_price_impact_points():
     assert "-0.1%" in line and "priceImpactPct" not in line
 
 
+def test_signals_entry_parity():
+    import numpy as np
+    from bot import signals as S
+    from bot.strategy import run_selective
+    up = list(1.0 * (1.01) ** np.arange(60))
+    take, feat = S.decide_entry(up, ["buy"] * 60, [50.0] * 60)
+    assert take and feat is not None
+    r, why, _ = run_selective(up, ["buy"] * 60, liq_series=[50.0] * 60)
+    assert r != 0.0 and why not in ("filtered", "too-short", "bad-tick")
+    flat = [1.0] * 60
+    take2, _ = S.decide_entry(flat, ["sell"] * 60, [50.0] * 60)
+    assert not take2
+    take3, _ = S.decide_entry(up, ["buy"] * 60, [5.0] * 60)
+    assert not take3  # thin pool rejected like paper's liq gate
+
+
+def test_signals_exit_order():
+    from bot import signals as S
+    assert S.decide_exit(1.0, 1.5, 0.85, 60.0) == "stop"
+    assert S.decide_exit(1.0, 1.5, 1.20, 60.0) == "trail"
+    assert S.decide_exit(1.0, 1.5, 1.70, 60.0) == "take"
+    assert S.decide_exit(1.0, 1.1, 1.10, 9999.0) == "hold-end"
+    assert S.decide_exit(1.0, 1.1, 1.10, 60.0) is None
+    assert S.decide_exit(0.0, 0.0, 0.0, 0.0) is None
+    # stop wins over trail when both trigger
+    assert S.decide_exit(1.0, 3.0, 0.80, 60.0) == "stop"
+
+
+def test_noquote_is_skip_not_error():
+    import os
+    from unittest.mock import patch
+    from bot import live
+    assert issubclass(live.NoQuote, RuntimeError)
+
+    class _Bad:
+        ok = False
+        status_code = 400
+        text = "No routes found"
+
+    class _Empty:
+        ok = True
+
+        def json(self):
+            return {"routePlan": [], "router": "metis"}  # no outAmount
+
+    with patch.dict(os.environ, {"JUPITER_API_KEY": "x"}):
+        with patch("bot.live.requests.get", return_value=_Bad()):
+            try:
+                live.get_order("A", "B", 100, "T")
+                raise SystemExit("must raise NoQuote")
+            except live.NoQuote:
+                pass
+        with patch("bot.live.requests.get", return_value=_Empty()):
+            try:
+                live.get_order("A", "B", 100, "T")
+                raise SystemExit("must raise NoQuote")
+            except live.NoQuote:
+                pass
+
+
 def test_live_order_param_plumbing():
     import os
     from unittest.mock import patch

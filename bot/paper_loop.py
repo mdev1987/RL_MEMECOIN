@@ -22,6 +22,7 @@ from bot.strategy import COST_PATHS, entry_liq_ok, run_selective
 from bot.wallet import Wallet
 from bot.ledger import append as ledger_append, row as ledger_row
 from bot.jup import enabled as jup_enabled, fmt_quote, order_quote, token_decimals, SOL, LAMPORTS
+from bot import signals as S
 from notifier import get_notifier
 
 log = logging.getLogger("paper_loop")
@@ -39,12 +40,12 @@ COST_PATH = os.environ.get("COST_PATH", "swqos")
 _COSTS = COST_PATHS.get(COST_PATH, COST_PATHS["swqos"])
 LATENCY_BARS = int(os.environ.get("LATENCY_BARS", "1"))
 FAIL_RATE = float(os.environ.get("FAIL_RATE", "0.02"))
-# Validated v3 entry filter (G1 pass 2026-10-15); overridable for research.
-ENTRY_MIN_RET = float(os.environ.get("ENTRY_MIN_RET", "0.05"))
-ENTRY_MIN_BUY = float(os.environ.get("ENTRY_MIN_BUY", "0.60"))
-ENTRY_MAX_DIP = float(os.environ.get("ENTRY_MAX_DIP", "-0.03"))
+# Entry filter defaults to the frozen shared rule (env-overridable).
+ENTRY_MIN_RET = float(os.environ.get("ENTRY_MIN_RET", str(S.ENTRY_MIN_RET)))
+ENTRY_MIN_BUY = float(os.environ.get("ENTRY_MIN_BUY", str(S.ENTRY_MIN_BUY)))
+ENTRY_MAX_DIP = float(os.environ.get("ENTRY_MAX_DIP", str(S.ENTRY_MAX_DIP)))
 ENTRY_THRESH = (ENTRY_MIN_RET, ENTRY_MIN_BUY, ENTRY_MAX_DIP)
-MIN_LIQ_SOL = float(os.environ.get("MIN_LIQ_SOL", "30.0"))
+MIN_LIQ_SOL = float(os.environ.get("MIN_LIQ_SOL", str(S.MIN_LIQ_SOL)))
 # Forward-validation ledger: every paper decision lands here as JSONL.
 LEDGER = os.environ.get("LEDGER_PATH",
                         str(Path(__file__).resolve().parents[1] / "data" / "decisions.jsonl"))

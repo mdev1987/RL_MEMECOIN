@@ -28,11 +28,11 @@ load_dotenv()
 load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=True)
 
 from bot.replay_eval import load_paths
-from bot.strategy import entry_liq_ok
 from bot.wallet import Wallet
 from bot.ledger import append as ledger_append, row as ledger_row
 from bot.jup import token_decimals, SOL, LAMPORTS
 from bot import live as L
+from bot import signals as S
 from notifier import get_notifier
 
 log = logging.getLogger("live_loop")
@@ -45,14 +45,15 @@ REPLAYS = [p for p in os.environ.get(
 POLL_SECS = int(os.environ.get("POLL_SECS", "60"))
 SIZE_SOL = float(os.environ.get("LIVE_SIZE_SOL",
                                 os.environ.get("SIZE_SOL", "0.01")))
-ENTRY_THRESH = (float(os.environ.get("ENTRY_MIN_RET", "0.05")),
-                float(os.environ.get("ENTRY_MIN_BUY", "0.60")),
-                float(os.environ.get("ENTRY_MAX_DIP", "-0.03")))
-MIN_LIQ_SOL = float(os.environ.get("MIN_LIQ_SOL", "30.0"))
+ENTRY_THRESH = (float(os.environ.get("ENTRY_MIN_RET", str(S.ENTRY_MIN_RET))),
+                float(os.environ.get("ENTRY_MIN_BUY", str(S.ENTRY_MIN_BUY))),
+                float(os.environ.get("ENTRY_MAX_DIP", str(S.ENTRY_MAX_DIP))))
+MIN_LIQ_SOL = float(os.environ.get("MIN_LIQ_SOL", str(S.MIN_LIQ_SOL)))
 SLICE = int(os.environ.get("SLICE", "25"))
 MAXOPEN = int(os.environ.get("LIVE_MAXOPEN", "2"))
-TP, SL, TRAIL = 0.6, 0.12, 0.15
-TIME_S = 3600.0
+# Exit thresholds shared with paper via signals (same rule, live marks).
+TP, SL, TRAIL = S.TAKE_PROFIT, S.STOP_LOSS, S.TRAILING
+TIME_S = S.TIME_S
 STALE_S = 600.0
 LEDGER = os.environ.get("LEDGER_PATH", str(REPO / "data" / "live_decisions.jsonl"))
 POSITIONS = str(REPO / "data" / "live_positions.json")
@@ -131,7 +132,9 @@ def main(require_live_flag: bool = True) -> None:
         off = (visits[replay] * SLICE) % len(paths) if paths else 0
         visits[replay] += 1
         batch = (paths + paths)[off:off + SLICE] if paths else []
-        # 1) manage opens on live marks
+        import collections as _collections
+        skip = _collections.Counter()
+        # 1) manage opens on live marks (same exit rule as paper)
         poss = load_positions()
         for mint, p in list(poss.items()):
             mark = live_mark(mint, p["qty_base"])
@@ -140,20 +143,13 @@ def main(require_live_flag: bool = True) -> None:
                 if now - p["t"] > STALE_S:
                     log.warning("STALE no-quote %s — keeping, retry next cycle",
                                 mint[:8])
+                    skip["live:no-quote"] += 1
                 continue
             peak = max(p.get("peak", 0.0), mark)
             p["peak"] = peak
             entry_val = p["size"]
             rr = mark / entry_val if entry_val > 0 else 0.0
-            why = None
-            if rr <= 1 - SL:
-                why = "stop"
-            elif peak > 0 and mark <= peak * (1 - TRAIL):
-                why = "trail"
-            elif rr >= 1 + TP:
-                why = "take"
-            elif now - p["t"] > TIME_S:
-                why = "hold-end"
+            why = S.decide_exit(entry_val, peak, mark, now - p["t"])
             if why is None:
                 continue
             try:
@@ -167,7 +163,8 @@ def main(require_live_flag: bool = True) -> None:
                     losses=w.s.losses))
                 ntf.send_close(
                     ca=mint, name=mint[:12], reason="TP" if why == "take"
-                    else ("SL" if why in ("stop", "trail") else "TIME"),
+                    else ("STOP" if why == "stop"
+                          else ("TRAIL" if why == "trail" else "TIME")),
                     mult=rr, pnl_sol=pnl, hold_s=now - p["t"],
                     entry_px=p.get("entry_px"), exit_px=mark,
                     size_sol=p["size"], balance_before=w.s.balance - pnl,
@@ -179,23 +176,30 @@ def main(require_live_flag: bool = True) -> None:
                          rc.total_in, rc.total_out, rc.out_amount)
                 del poss[mint]
                 save_positions(poss)
+            except L.NoQuote as exc:
+                # routine venue miss (illiquid mint): skip like paper's
+                # `filtered` — counted, never alerted.
+                skip["live:no-quote"] += 1
+                log.info("LIVE skip no-quote %s: %s", mint[:8], exc)
             except Exception as exc:
                 log.error("LIVE SELL FAILED %s: %s", mint[:8], exc)
                 ntf.send_alert("🔴 LIVE SELL FAILED", f"{mint[:8]}: {exc}")
-        # 2) entries (skip entirely when killed/halted/capped)
+        # 2) entries (skip entirely when killed/halted/capped) — same
+        # entry gate as paper, Jupiter fills instead of simulation.
         if not L.killed() and not w.s.halted and len(poss) < MAXOPEN:
-            from bot.strategy import early_features, select_entry
             for d in batch:
                 if len(load_positions()) >= MAXOPEN:
                     break
-                if not entry_liq_ok(d.get("liq_series") or [d.get("liq", 0.0)] * 11,
-                                    min_liq=MIN_LIQ_SOL):
+                take, _ = S.decide_entry(
+                    d["prices"], d.get("actions"), d.get("liq_series"),
+                    liq=d.get("liq", 0.0), thresh=ENTRY_THRESH,
+                    min_liq=MIN_LIQ_SOL)
+                if not take:
+                    skip["strategy:filtered"] += 1
                     continue
-                ok, _ = w.can_open(SIZE_SOL, d.get("mint", "?"))
+                ok, why_not = w.can_open(SIZE_SOL, d.get("mint", "?"))
                 if not ok:
-                    continue
-                feat = early_features(d["prices"], d.get("actions"), 10)
-                if not select_entry(feat, ENTRY_THRESH):
+                    skip[f"wallet:{why_not}"] += 1
                     continue
                 mint = d.get("mint", "?")
                 try:
@@ -222,9 +226,14 @@ def main(require_live_flag: bool = True) -> None:
                                   jup=f"🔴 LIVE BUY sig `{rc.signature[:12]}`")
                     log.info("LIVE BUY %s sig=%s", mint[:8],
                              rc.signature[:12])
+                except L.NoQuote as exc:
+                    skip["live:no-quote"] += 1
+                    log.info("LIVE skip no-quote %s: %s", mint[:8], exc)
                 except Exception as exc:
                     log.error("LIVE BUY FAILED %s: %s", mint[:8], exc)
                     ntf.send_alert("🔴 LIVE BUY FAILED", f"{mint[:8]}: {exc}")
+            log.info("cycle done skip=%s sleeping %ds",
+                     dict(skip), POLL_SECS)
         time.sleep(POLL_SECS)
 
 

@@ -55,6 +55,14 @@ class Receipt:
     total_out: str = "?"
 
 
+class NoQuote(RuntimeError):
+    """Routine venue miss: no route for this mint/size right now.
+
+    Fresh illiquid memecoins hit this constantly. Callers must treat it
+    as a SKIP (same as paper's `filtered`), never as an error alert.
+    """
+
+
 def _env_flag(name: str) -> bool:
     return os.environ.get(name, "0") == "1"
 
@@ -111,10 +119,11 @@ def get_order(input_mint: str, output_mint: str, amount_base: int,
         f"{BASE}/order", params=params,
         headers={"x-api-key": _api_key()}, timeout=timeout)
     if not r.ok:
-        raise RuntimeError(f"order HTTP {r.status_code}: {r.text[:200]}")
+        # 400 "No routes found" is routine for fresh illiquid mints.
+        raise NoQuote(f"order HTTP {r.status_code}: {r.text[:200]}")
     o = r.json()
     if "outAmount" not in o:
-        raise RuntimeError(f"order no quote: {str(o)[:200]}")
+        raise NoQuote(f"order no quote: {str(o)[:200]}")
     return o
 
 
