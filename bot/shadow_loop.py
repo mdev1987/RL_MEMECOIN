@@ -220,8 +220,8 @@ def main() -> None:
                         max_positions=MAXOPEN, win_rate=w.s.win_rate,
                         dex="jupiter", buys=len(t["prices"]),
                         jup="🕶️ SHADOW BUY (signed-never-sent)")
-                    log.info("SHADOW BUY %s epx=%s", m[:8],
-                             t["prices"][ENTRY_N - 1])
+                    log.info("SHADOW BUY %s epx=%s dec=%s qty_base=%s",
+                             m[:8], t["prices"][ENTRY_N - 1], dec, qty_base)
                 now = time.time()
                 if now - last_prune > PRUNE_S:
                     cutoff = now * 1000 - IDLE_DROP_S * 1000
