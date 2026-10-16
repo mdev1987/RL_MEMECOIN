@@ -1,0 +1,12 @@
+{
+ "config": "selective-v3 frozen (0.05,0.60,-0.03) liq>=30 TP60/SL12/trail15 swqos, zero tuning since freeze",
+ "n_clusters": 14,
+ "all_positive": true,
+ "total_traded": 182,
+ "pooled_g1": {
+  "mean": 0.00196,
+  "lower95": 0.0011,
+  "pass": true
+ },
+ "note": "14 independent day-hours (Oct03-05 x 13/14/15/17/18); per-file numbers reproduce user v5/v6 tables exactly; day-arrays banked in pooled14_arrays.json"
+}
