@@ -145,6 +145,8 @@ def main(require_live_flag: bool = True) -> None:
                                 mint[:8])
                     skip["live:no-quote"] += 1
                 continue
+            if now < p.get("cool_until", 0.0):
+                continue  # backing off after a venue miss
             peak = max(p.get("peak", 0.0), mark)
             p["peak"] = peak
             entry_val = p["size"]
@@ -178,8 +180,10 @@ def main(require_live_flag: bool = True) -> None:
                 save_positions(poss)
             except L.NoQuote as exc:
                 # routine venue miss (illiquid mint): skip like paper's
-                # `filtered` — counted, never alerted.
+                # `filtered` — counted, never alerted; cool down retries.
                 skip["live:no-quote"] += 1
+                poss[mint]["cool_until"] = time.time() + 60.0
+                save_positions(poss)
                 log.info("LIVE skip no-quote %s: %s", mint[:8], exc)
             except Exception as exc:
                 log.error("LIVE SELL FAILED %s: %s", mint[:8], exc)

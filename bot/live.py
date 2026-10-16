@@ -63,6 +63,26 @@ class NoQuote(RuntimeError):
     """
 
 
+_last_order_ts = 0.0
+
+
+def order_throttled() -> bool:
+    """Gateway politeness: min interval between /order calls.
+
+    The API gateway 429s bursts (seen live); throttling converts a
+    retry-storm into spaced single attempts. Returns True when the
+    caller must back off now.
+    """
+    global _last_order_ts
+    import time
+    gap = float(os.environ.get("JUP_MIN_INTERVAL_S", "1.5"))
+    now = time.monotonic()
+    if now - _last_order_ts < gap:
+        return True
+    _last_order_ts = now
+    return False
+
+
 def _env_flag(name: str) -> bool:
     return os.environ.get(name, "0") == "1"
 
@@ -123,6 +143,8 @@ def get_order(input_mint: str, output_mint: str, amount_base: int,
         params["slippageBps"] = str(int(slippage_bps))
     if int(jito_tip_lamports or 0) > 0:
         params["jitoTipLamports"] = str(int(jito_tip_lamports))
+    if order_throttled():
+        raise NoQuote("throttled: min /order interval")
     r = requests.get(
         f"{BASE}/order", params=params,
         headers={"x-api-key": _api_key()}, timeout=timeout)

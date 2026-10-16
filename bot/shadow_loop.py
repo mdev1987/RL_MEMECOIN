@@ -156,22 +156,27 @@ def main() -> None:
                     p["peak"] = max(p.get("peak", 0.0), mark)
                     why = S.decide_exit(p["size"], p["peak"], mark,
                                         time.time() - p["t"])
-                    if why is not None and not w.s.halted:
-                        try:
-                            rc = L.place_order(
-                                m, SOL, p["qty_base"], p["size"],
-                                shadow=True)
-                            log.info("SHADOW exit quote out=%s",
-                                     rc.out_amount)
-                        except L.NoQuote as exc:
-                            log.info("SHADOW exit no-quote %s: %s",
-                                     m[:8], exc)
-                            continue
-                        except Exception as exc:
-                            log.warning("SHADOW exit sign failed %s: %s",
-                                        m[:8], exc)
-                            continue
-                        close_position(m, why, mark)
+                    if why is None or w.s.halted:
+                        continue
+                    if time.time() < p.get("cool_until", 0.0):
+                        continue  # backing off after a venue miss
+                    try:
+                        rc = L.place_order(
+                            m, SOL, p["qty_base"], p["size"],
+                            shadow=True)
+                        p.pop("cool_until", None)
+                        log.info("SHADOW exit quote out=%s",
+                                 rc.out_amount)
+                    except L.NoQuote as exc:
+                        log.info("SHADOW exit no-quote %s: %s",
+                                 m[:8], exc)
+                        p["cool_until"] = time.time() + 60.0
+                        continue
+                    except Exception as exc:
+                        log.warning("SHADOW exit sign failed %s: %s",
+                                    m[:8], exc)
+                        continue
+                    close_position(m, why, mark)
                 # entry gate on fresh tapes only
                 if (not t["done"] and m not in poss and not w.s.halted
                         and len(poss) < MAXOPEN

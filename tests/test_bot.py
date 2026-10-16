@@ -516,7 +516,7 @@ def test_live_shadow_never_executes():
             return _S()
 
     order = _live_order()
-    with patch.dict(os.environ, {"LIVE_MAX_SOL": "1.0"}):
+    with patch.dict(os.environ, {"LIVE_MAX_SOL": "1.0", "JUP_MIN_INTERVAL_S": "0"}):
         with patch("bot.live.killed", return_value=False), \
              patch("bot.live._load_keypair", return_value=_KP()), \
              patch("bot.live.get_order", return_value=order) as go, \
@@ -542,7 +542,7 @@ def test_live_execute_failure_mapping():
             return _S()
 
     order = _live_order()
-    with patch.dict(os.environ, {"LIVE_MAX_SOL": "1.0"}):
+    with patch.dict(os.environ, {"LIVE_MAX_SOL": "1.0", "JUP_MIN_INTERVAL_S": "0"}):
         with patch("bot.live.killed", return_value=False), \
              patch("bot.live._load_keypair", return_value=_KP()), \
              patch("bot.live.get_order", return_value=order), \
@@ -639,7 +639,7 @@ def test_live_receipt_actuals():
     order = _live_order()
     res = {"status": "Success", "signature": "sig1", "slot": "9",
            "totalInputAmount": "10000000", "totalOutputAmount": "8990000"}
-    with patch.dict(os.environ, {"LIVE_MAX_SOL": "1.0", "HELIUS_API_KEY": ""}):
+    with patch.dict(os.environ, {"LIVE_MAX_SOL": "1.0", "HELIUS_API_KEY": "", "JUP_MIN_INTERVAL_S": "0"}):
         with patch("bot.live.killed", return_value=False), \
              patch("bot.live._load_keypair", return_value=_KP()), \
              patch("bot.live.get_order", return_value=order), \
@@ -702,7 +702,8 @@ def test_noquote_is_skip_not_error():
         def json(self):
             return {"routePlan": [], "router": "metis"}  # no outAmount
 
-    with patch.dict(os.environ, {"JUPITER_API_KEY": "x"}):
+    with patch.dict(os.environ, {"JUPITER_API_KEY": "x",
+                                 "JUP_MIN_INTERVAL_S": "0"}):
         with patch("bot.live.requests.get", return_value=_Bad()):
             try:
                 live.get_order("A", "B", 100, "T")
@@ -728,7 +729,8 @@ def test_live_order_param_plumbing():
         def json(self):
             return {"outAmount": "1", "routePlan": []}
 
-    with patch.dict(os.environ, {"JUPITER_API_KEY": "x"}):
+    with patch.dict(os.environ, {"JUPITER_API_KEY": "x",
+                                 "JUP_MIN_INTERVAL_S": "0"}):
         with patch("bot.live.requests.get", return_value=_R()) as g:
             live.get_order("A", "B", 100, "T", slippage_bps="auto",
                            jito_tip_lamports=0)
@@ -741,6 +743,30 @@ def test_live_order_param_plumbing():
             _, kw = g.call_args
             assert kw["params"]["slippageBps"] == "100", kw
             assert kw["params"]["jitoTipLamports"] == "1000", kw
+
+
+def test_live_order_throttle():
+    import os
+    from unittest.mock import patch
+    from bot import live
+    live._last_order_ts = 0.0
+
+    class _R:
+        ok = True
+
+        def json(self):
+            return {"outAmount": "1", "routePlan": []}
+
+    with patch.dict(os.environ, {"JUPITER_API_KEY": "x",
+                                 "JUP_MIN_INTERVAL_S": "60"}):
+        with patch("bot.live.requests.get", return_value=_R()):
+            live.get_order("A", "B", 100, "T")
+            try:
+                live.get_order("A", "B", 100, "T")
+                raise SystemExit("second call must throttle")
+            except live.NoQuote as e:
+                assert "throttled" in str(e)
+    live._last_order_ts = 0.0
 
 
 def test_live_refuses_v1():
