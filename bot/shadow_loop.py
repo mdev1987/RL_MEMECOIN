@@ -52,6 +52,18 @@ WALLET = str(REPO / "data" / "shadow_wallet.json")
 LEDGER = str(REPO / "data" / "shadow_decisions.jsonl")
 
 
+def sweep_due(p: dict, now: float, time_s: float = 3600.0,
+              stale_s: float = 600.0) -> str | None:
+    """Flow-independent exit check. Returns 'hold-end'/'stale'/None."""
+    age = now - p["t"]
+    idle = now - p.get("last_ts", p["t"] * 1000) / 1000
+    if age > time_s:
+        return "hold-end"
+    if idle > stale_s:
+        return "stale"
+    return None
+
+
 def new_tape(mint: str, ts: int):
     return {"mint": mint, "t0": ts, "prices": [], "acts": [],
             "liq": [], "buyers": [], "sells": 0, "last_ts": ts,
@@ -152,6 +164,8 @@ def main() -> None:
                 # live mark for open paper positions (last-print marks)
                 if m in poss and t["prices"]:
                     p = poss[m]
+                    p["last_px"] = px
+                    p["last_ts"] = ts
                     mark = px * p["qty_tokens"]
                     p["peak"] = max(p.get("peak", 0.0), mark)
                     why = S.decide_exit(p["size"], p["peak"], mark,
@@ -221,7 +235,7 @@ def main() -> None:
                         dex="jupiter", buys=len(t["prices"]),
                         jup="🕶️ SHADOW BUY (signed-never-sent)")
                     log.info("SHADOW BUY %s epx=%s dec=%s qty_base=%s",
-                             m[:8], t["prices"][ENTRY_N - 1], dec, qty_base)
+                             m, t["prices"][ENTRY_N - 1], dec, qty_base)
                 now = time.time()
                 if now - last_prune > PRUNE_S:
                     cutoff = now * 1000 - IDLE_DROP_S * 1000
@@ -229,6 +243,30 @@ def main() -> None:
                                if k not in poss and v["last_ts"] < cutoff]:
                         del mints[mk]
                     last_prune = now
+                    # flow-independent exits: dead mints get no prints, so
+                    # TIME/STALE must fire here or positions sit forever.
+                    for mk, p in list(poss.items()):
+                        why = sweep_due(p, now)
+                        if why is None:
+                            continue
+                        mark = p.get("last_px", 0.0) * p["qty_tokens"]
+                        if mark <= 0:
+                            continue
+                        try:
+                            rc = L.place_order(
+                                mk, SOL, p["qty_base"], p["size"],
+                                shadow=True)
+                            log.info("SHADOW sweep exit quote out=%s",
+                                     rc.out_amount)
+                        except L.NoQuote as exc:
+                            log.info("SHADOW sweep no-quote %s: %s",
+                                     mk[:8], exc)
+                            continue
+                        except Exception as exc:
+                            log.warning("SHADOW sweep sign failed %s: %s",
+                                        mk[:8], exc)
+                            continue
+                        close_position(mk, why, mark)
 
     asyncio.run(run())
     log.info("shadow done bal=%.4f W=%d L=%d",

@@ -855,3 +855,16 @@ def test_open_card_shows_before_after_balance():
     n.send_close(ca="CA", name="M", reason="TP", mult=1.6, pnl_sol=0.03,
                  balance_before=1.67, balance_after=1.70)
     assert "1.67" in captured[-1] and "1.70" in captured[-1]
+
+
+def test_shadow_sweep_due():
+    from bot.shadow_loop import sweep_due
+    now = 1000000.0
+    assert sweep_due({"t": now - 4000}, now) == "hold-end"
+    assert sweep_due({"t": now - 100, "last_ts": (now - 700) * 1000},
+                     now) == "stale"
+    assert sweep_due({"t": now - 100, "last_ts": (now - 10) * 1000},
+                     now) is None
+    # hold-end wins over stale on old positions
+    assert sweep_due({"t": now - 4000, "last_ts": (now - 9999) * 1000},
+                     now) == "hold-end"
