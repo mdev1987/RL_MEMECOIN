@@ -40,3 +40,25 @@ jumps (regression: 2026-10-12 +26154% event is now `bad-tick`, never booked).
   (`eval_oos_fresh.py`) has no tuning knobs. Only 2 clusters, so thin —
   but genuine OOS. See `eval/results_oos.json`.
 - Costs: pessimistic fills (worst-of-next-bar), 2% fail rate (fee only), venue costs per path.
+
+## Live trading (real money — staged rollout required)
+Paper and live share signals; only the fill path differs (`bot/live.py`:
+`/order` → guards → local sign → `/execute` → RPC confirm).
+
+Guards (fail-closed): `data/LIVE_KILL` file, `LIVE_MAX_SOL` cap (default
+0.01 dust), price-impact cap (default 5%), min-out threshold, gasless refusal
+(`signatureFeePayer == taker`), priority-fee cap, retryable/fatal error map.
+Exits run on live Jupiter marks (TP/SL/trail/TIME/STALE), never replay marks.
+
+Rollout (each stage needs a written pass before the next):
+1. **Shadow**: `SHADOW=1` — full order + local sign, never executes.
+   Requires a funded taker (empty wallet fails closed with code 1).
+   Measure fill parity shadow-vs-paper for a week.
+2. **Dust**: `LIVE_TRADING=1 LIVE_CONFIRM=YES python -m bot.live_loop --live`
+   with `LIVE_SIZE_SOL=0.01`, separate `live_wallet.json`. Kill via
+   `touch data/LIVE_KILL`. Risk: total loss of deployed size is assumed.
+3. **Scale**: raise `LIVE_SIZE_SOL`/`LIVE_MAXOPEN` only on green dust +
+   green shadow parity. Never exceed what a same-day -100% rug costs you.
+
+Key lives in `.env.signer` (600, gitignored); paper daemons never load it.
+`meme-live` is NOT registered in oxfile — start by hand, on purpose.

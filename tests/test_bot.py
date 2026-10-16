@@ -447,3 +447,163 @@ def test_jup_decimals_cache_and_fail():
         assert jup.token_decimals("N*N", "") is None  # no key -> None fast
         assert jup.token_decimals("N2", "key") is None  # net fail -> None
     assert jup.enabled() in (True, False)
+
+
+def _live_order(**kw):
+    o = {"inAmount": "10000000", "outAmount": "9000000",
+         "otherAmountThreshold": "8000000", "priceImpact": "-0.5",
+         "signatureFeePayer": "TAKER", "prioritizationFeeLamports": 5000,
+         "transaction": "dHg=", "requestId": "r1", "router": "metis"}
+    o.update(kw)
+    return o
+
+
+def test_live_guards():
+    from bot import live
+    ok, why = live.check_guards(_live_order(), "TAKER", 1.0)
+    assert ok, why
+    ok, why = live.check_guards(_live_order(priceImpact="-6.0"), "TAKER", 1.0)
+    assert not ok and "impact" in why, why
+    ok, why = live.check_guards(
+        _live_order(outAmount="7000000"), "TAKER", 1.0)
+    assert not ok and "min-out" in why, why
+    ok, why = live.check_guards(
+        _live_order(signatureFeePayer="SPONSOR"), "TAKER", 1.0)
+    assert not ok and "gasless" in why, why
+    ok, why = live.check_guards(
+        _live_order(prioritizationFeeLamports=999999999), "TAKER", 1.0)
+    assert not ok and "priority" in why, why
+    bad = _live_order()
+    del bad["transaction"]
+    ok, why = live.check_guards(bad, "TAKER", 1.0)
+    assert not ok and "no transaction" in why, why
+
+
+def test_live_place_order_gates():
+    import os
+    from unittest.mock import patch
+    from bot import live
+    with patch.dict(os.environ, {"LIVE_MAX_SOL": "0.01"}):
+        # kill file refuses before any network/key
+        with patch("bot.live.killed", return_value=True):
+            try:
+                live.place_order("A", "B", 100, 0.001)
+                raise SystemExit("kill must refuse")
+            except RuntimeError as e:
+                assert "KILL" in str(e)
+        # size cap refuses
+        with patch("bot.live.killed", return_value=False):
+            try:
+                live.place_order("A", "B", 100, 99.0)
+                raise SystemExit("cap must refuse")
+            except RuntimeError as e:
+                assert "LIVE_MAX_SOL" in str(e)
+
+
+def test_live_shadow_never_executes():
+    import os
+    from unittest.mock import patch
+    from bot import live
+
+    class _KP:
+        def pubkey(self):
+            return "TAKER"
+
+        def sign_message(self, msg):
+            class _S:
+                def verify(self, p, m):
+                    return True
+            return _S()
+
+    order = _live_order()
+    with patch.dict(os.environ, {"LIVE_MAX_SOL": "1.0"}):
+        with patch("bot.live.killed", return_value=False), \
+             patch("bot.live._load_keypair", return_value=_KP()), \
+             patch("bot.live.get_order", return_value=order) as go, \
+             patch("bot.live.sign_order", return_value="c2ln") as so, \
+             patch("bot.live.execute_signed") as ex:
+            rc = live.place_order("A", "B", 100, 0.01, shadow=True)
+            assert rc.shadow and go.called and so.called and not ex.called
+
+
+def test_live_execute_failure_mapping():
+    import os
+    from unittest.mock import patch
+    from bot import live
+
+    class _KP:
+        def pubkey(self):
+            return "TAKER"
+
+        def sign_message(self, msg):
+            class _S:
+                def verify(self, p, m):
+                    return True
+            return _S()
+
+    order = _live_order()
+    with patch.dict(os.environ, {"LIVE_MAX_SOL": "1.0"}):
+        with patch("bot.live.killed", return_value=False), \
+             patch("bot.live._load_keypair", return_value=_KP()), \
+             patch("bot.live.get_order", return_value=order), \
+             patch("bot.live.sign_order", return_value="c2ln"), \
+             patch("bot.live.execute_signed",
+                   return_value={"status": "Failed", "error": "no land",
+                                 "code": -1000}):
+            try:
+                live.place_order("A", "B", 100, 0.01)
+                raise SystemExit("must raise")
+            except RuntimeError as e:
+                assert "retryable=True" in str(e), e
+
+
+def test_live_sign_roundtrip():
+    """Sign path without network: build a real v0 message locally,
+    serialize like /order would, then sign_order must verify."""
+    import base64
+    from solders.hash import Hash
+    from solders.instruction import Instruction
+    from solders.keypair import Keypair
+    from solders.message import MessageV0
+    from solders.pubkey import Pubkey
+    from solders.transaction import VersionedTransaction
+    from bot import live
+
+    kp = Keypair()
+    ix = Instruction(program_id=Pubkey.default(), data=b"\x00", accounts=[])
+    msg = MessageV0.try_compile(kp.pubkey(), [ix], [],
+                                Hash(bytes(32)))
+    wire = base64.b64encode(bytes(VersionedTransaction.populate(
+        msg, [kp.sign_message(bytes(msg))]))).decode()
+    order = _live_order(transaction=wire)
+    out = live.sign_order(order, kp)
+    back = VersionedTransaction.from_bytes(base64.b64decode(out))
+    assert bytes(back.message) == bytes(msg)
+
+
+def test_live_loop_refuses():
+    import os
+    from unittest.mock import patch
+    from bot import live_loop
+
+    class _Ntf:
+        def send_alert(self, *a, **k):
+            self.last = (a, k)
+
+    with patch.dict(os.environ,
+                    {"LIVE_TRADING": "0", "LIVE_CONFIRM": "NO",
+                     "_LIVE_FLAG": ""}, clear=False), \
+         patch("bot.live_loop.get_notifier", return_value=_Ntf()):
+        try:
+            live_loop.main(require_live_flag=True)
+            raise SystemExit("must refuse")
+        except SystemExit as e:
+            assert "LIVE REFUSED" in str(e), e
+
+
+def patch_dict_clean():
+    import os
+    from unittest.mock import patch
+    return patch.dict(os.environ,
+                      {"LIVE_TRADING": "0", "LIVE_CONFIRM": "NO",
+                       "_LIVE_FLAG": ""}, clear=False)
