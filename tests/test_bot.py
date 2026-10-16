@@ -557,7 +557,8 @@ def test_live_execute_failure_mapping():
                 assert "retryable=True" in str(e), e
 
 
-def test_live_sign_roundtrip():    """Sign path without network: build a real v0 message locally,
+def test_live_sign_roundtrip():
+    """Sign path without network: build a real v0 message locally,
     serialize like /order would, then sign_order must verify."""
     import base64
     from solders.hash import Hash
