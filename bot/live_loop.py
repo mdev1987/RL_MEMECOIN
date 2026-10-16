@@ -219,7 +219,7 @@ def main(require_live_flag: bool = True) -> None:
                                   price=float(d["prices"][10]),
                                   size_sol=SIZE_SOL,
                                   balance_before=w.s.balance,
-                                  balance_after=w.s.balance,
+                                  balance_after=w.s.balance - SIZE_SOL,
                                   open_count=len(poss),
                                   max_positions=MAXOPEN, win_rate=w.s.win_rate,
                                   dex="jupiter",

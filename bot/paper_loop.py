@@ -142,10 +142,10 @@ def main() -> None:
                     jup_line = fmt_quote(_q, "buy")
                     if jup_line:
                         log.info("jupq buy %s", jup_line)
-                # OPEN card
+                # OPEN card (after = capital committed to the position)
                 ntf.send_open(ca=ca, name=name, price=float(d["prices"][10]),
                               size_sol=SIZE_SOL, balance_before=balance,
-                              balance_after=balance, dex="pump-amm",
+                              balance_after=balance - SIZE_SOL, dex="pump-amm",
                               liq_usd=d.get("liq", 0.0) * 150.0, jup=jup_line)
                 # simulate hold duration ~ bars
                 hold_s = float(len(d["prices"]) * 2)

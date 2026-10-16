@@ -785,3 +785,47 @@ def test_live_key_names():
                                  "PRIVATE_KEY": "bogus-not-valid"}):
         kp = live._load_keypair()
         assert str(kp.pubkey()) == str(Keypair.from_bytes(raw).pubkey())
+
+
+def test_shadow_refuses_without_key():
+    import tempfile
+    from pathlib import Path
+    from unittest.mock import patch
+    from bot import live, shadow_loop
+    with patch.object(live, "REPO", Path(tempfile.mkdtemp())), \
+         patch.object(shadow_loop, "REPO", Path(tempfile.mkdtemp())), \
+         patch.object(shadow_loop, "WALLET", str(Path(tempfile.mkdtemp()) / "w.json")), \
+         patch("sys.argv", ["shadow_loop", "--secs", "1"]):
+        try:
+            shadow_loop.main()
+            raise SystemExit("must refuse")
+        except SystemExit as e:
+            assert "needs key" in str(e), e
+
+
+def test_shadow_default_size_within_live_cap():
+    import os
+    from unittest.mock import patch
+    with patch.dict(os.environ, {}, clear=False):
+        os.environ.pop("SHADOW_SIZE_SOL", None)
+        os.environ.pop("SIZE_SOL", None)
+        import importlib
+        import bot.shadow_loop as sl
+        importlib.reload(sl)
+        assert sl.SIZE_SOL <= float(os.environ.get("LIVE_MAX_SOL", "0.01")), sl.SIZE_SOL
+
+
+def test_open_card_shows_before_after_balance():
+    from notifier import TelegramNotifier
+    n = TelegramNotifier.__new__(TelegramNotifier)
+    n._token, n._chat = None, None
+    n._enabled = True
+    n._last, n._sent = 0.0, []
+    captured = []
+    n._post = lambda text: captured.append(text) or True
+    n.send_open(ca="CA", name="M", price=0.001, size_sol=0.05,
+                balance_before=1.72, balance_after=1.67)
+    assert "1.72" in captured[-1] and "1.67" in captured[-1], captured[-1]
+    n.send_close(ca="CA", name="M", reason="TP", mult=1.6, pnl_sol=0.03,
+                 balance_before=1.67, balance_after=1.70)
+    assert "1.67" in captured[-1] and "1.70" in captured[-1]
