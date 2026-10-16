@@ -557,8 +557,7 @@ def test_live_execute_failure_mapping():
                 assert "retryable=True" in str(e), e
 
 
-def test_live_sign_roundtrip():
-    """Sign path without network: build a real v0 message locally,
+def test_live_sign_roundtrip():    """Sign path without network: build a real v0 message locally,
     serialize like /order would, then sign_order must verify."""
     import base64
     from solders.hash import Hash
@@ -607,3 +606,51 @@ def patch_dict_clean():
     return patch.dict(os.environ,
                       {"LIVE_TRADING": "0", "LIVE_CONFIRM": "NO",
                        "_LIVE_FLAG": ""}, clear=False)
+
+
+def test_live_fee_cap_guard():
+    import os
+    from unittest.mock import patch
+    from bot import live
+    base = _live_order()
+    with patch.dict(os.environ, {"LIVE_MAX_FEE_BPS": "200"}):
+        ok, _ = live.check_guards(base, "TAKER", 1.0)
+        assert ok
+        ok, why = live.check_guards(dict(base, feeBps=500), "TAKER", 1.0)
+        assert not ok and "fee" in why, why
+
+
+def test_live_receipt_actuals():
+    import os
+    from unittest.mock import patch
+    from bot import live
+
+    class _KP:
+        def pubkey(self):
+            return "TAKER"
+
+        def sign_message(self, msg):
+            class _S:
+                def verify(self, p, m):
+                    return True
+            return _S()
+
+    order = _live_order()
+    res = {"status": "Success", "signature": "sig1", "slot": "9",
+           "totalInputAmount": "10000000", "totalOutputAmount": "8990000"}
+    with patch.dict(os.environ, {"LIVE_MAX_SOL": "1.0", "HELIUS_API_KEY": ""}):
+        with patch("bot.live.killed", return_value=False), \
+             patch("bot.live._load_keypair", return_value=_KP()), \
+             patch("bot.live.get_order", return_value=order), \
+             patch("bot.live.sign_order", return_value="c2ln"), \
+             patch("bot.live.execute_signed", return_value=res):
+            rc = live.place_order("A", "B", 100, 0.01)
+            assert not rc.shadow and rc.total_in == "10000000"
+            assert rc.total_out == "8990000"
+
+
+def test_jup_fmt_uses_price_impact_points():
+    from bot import jup
+    line = jup.fmt_quote({"outAmount": "7", "priceImpact": -0.1,
+                          "route": [(100, "X")]}, "sell")
+    assert "-0.1%" in line and "priceImpactPct" not in line

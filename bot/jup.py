@@ -79,7 +79,9 @@ def fmt_quote(q: dict | None, side: str) -> str | None:
         return None
     try:
         route = ",".join(f"{p}%{lbl}" for p, lbl in (q.get("route") or [])[:3])
+        # priceImpact on /order is percentage POINTS (-0.1 = -0.1%);
+        # priceImpactPct is deprecated and must not be used.
         return (f"🔮 Jup {side} out `{q['outAmount']}` "
-                f"(impact `{q.get('priceImpactPct', '?')}%` via {route or '?'})")
+                f"(impact `{q.get('priceImpact', '?')}%` via {route or '?'})")
     except Exception:
         return None

@@ -175,6 +175,8 @@ def main(require_live_flag: bool = True) -> None:
                     dex="jupiter", via=f"live sig {rc.signature[:8]}")
                 log.info("LIVE SELL %s %s sig=%s", mint[:8], why,
                          rc.signature[:12])
+                log.info("LIVE actuals in=%s out=%s (quoted %s)",
+                         rc.total_in, rc.total_out, rc.out_amount)
                 del poss[mint]
                 save_positions(poss)
             except Exception as exc:

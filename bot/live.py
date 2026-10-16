@@ -45,6 +45,9 @@ class Receipt:
     out_amount: str
     router: str
     shadow: bool = False
+    # actuals from /execute (landed truth vs quoted outAmount)
+    total_in: str = "?"
+    total_out: str = "?"
 
 
 def _env_flag(name: str) -> bool:
@@ -114,6 +117,14 @@ def check_guards(o: dict, taker: str, max_sol: float) -> tuple[bool, str]:
         prio = int(o.get("prioritizationFeeLamports") or 0)
         if prio > int(os.environ.get("LIVE_MAX_PRIO_LAMPORTS", "100000")):
             return False, f"priority fee {prio} over cap"
+        # feeBps is the TOTAL rate incl. gasless support-cost recoup
+        # (platformFee.feeBps is Jupiter's cut only). Cap the total.
+        try:
+            fee_bps = float(o.get("feeBps") or 0.0)
+        except Exception:
+            fee_bps = 0.0
+        if fee_bps > float(os.environ.get("LIVE_MAX_FEE_BPS", "200")):
+            return False, f"total fee {fee_bps}bps over cap"
         if not o.get("transaction"):
             return False, (f"no transaction "
                            f"(router={o.get('router')} code={o.get('errorCode')})")
@@ -206,4 +217,6 @@ def place_order(input_mint: str, output_mint: str, amount_base: int,
     return Receipt(signature=res["signature"], slot=str(res.get("slot")),
                    in_amount=o.get("inAmount", "?"),
                    out_amount=o.get("outAmount", "?"),
-                   router=o.get("router", "?"))
+                   router=o.get("router", "?"),
+                   total_in=str(res.get("totalInputAmount", "?")),
+                   total_out=str(res.get("totalOutputAmount", "?")))
