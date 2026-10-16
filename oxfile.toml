@@ -9,7 +9,7 @@ version = 1
 
 [[apps]]
 name = "meme-paper"
-command = "/usr/bin/python3 -u -m bot.paper_loop"
+command = "/home/mdev/Programming/RL_MEMECOIN/.venv/bin/python -u -m bot.paper_loop"
 cwd = "/home/mdev/Programming/RL_MEMECOIN"
 restart_policy = "always"
 max_restarts = 100
@@ -25,7 +25,7 @@ stop_timeout_secs = 20
 unified_logs = true
 
 [apps.env]
-PATH = "/usr/bin:/usr/local/bin:/bin"
+PATH = "/home/mdev/Programming/RL_MEMECOIN/.venv/bin:/usr/local/bin:/usr/bin:/bin"
 HOME = "/home/mdev"
 POLL_SECS = "300"
 SIZE_SOL = "0.05"
