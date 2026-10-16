@@ -10,5 +10,6 @@ dependencies = [
     "requests>=2.34.2",
     "solders>=0.29.0",
     "telegramify-markdown>=1.4.0",
+    "websockets>=15.0",
     "zstandard>=0.25.0",
 ]
