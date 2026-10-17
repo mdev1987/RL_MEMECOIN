@@ -1,0 +1,4 @@
+00: scanned=300001 npaths=207 tr=5 mean=+0.00368 mean_tr=+0.1524 win=0.60
+01: scanned=300001 npaths=142 tr=4 mean=-0.00196 mean_tr=-0.0697 win=0.25
+02: scanned=300001 npaths=163 tr=6 mean=-0.00033 mean_tr=-0.0090 win=0.33
+OOS-G1: mean=+0.00070 lb=-0.00196 pass=False
