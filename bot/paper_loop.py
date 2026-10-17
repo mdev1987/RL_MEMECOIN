@@ -138,7 +138,8 @@ def main() -> None:
                 # Live venue quote for the fill (fail-open: card sends regardless)
                 jup_line = None
                 if jup_enabled():
-                    _q = order_quote(SOL, ca, int(round(SIZE_SOL * LAMPORTS)))
+                    _q = order_quote(SOL, ca, int(round(SIZE_SOL * LAMPORTS)),
+                                     replay=True)
                     jup_line = fmt_quote(_q, "buy")
                     if jup_line:
                         log.info("jupq buy %s", jup_line)
@@ -163,7 +164,7 @@ def main() -> None:
                     _epx = float(d["prices"][10])
                     if _dec is not None and _epx > 0:
                         _qty = int(SIZE_SOL / _epx * (10 ** _dec))
-                        _qc = order_quote(ca, SOL, _qty)
+                        _qc = order_quote(ca, SOL, _qty, replay=True)
                         jup_close = fmt_quote(_qc, "sell")
                         if jup_close:
                             log.info("jupq sell %s", jup_close)

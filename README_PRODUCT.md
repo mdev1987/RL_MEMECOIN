@@ -90,6 +90,9 @@ failures; all are now fixed and covered by tests (56 total):
 - **Politeness:** `/order` calls are throttled (`JUP_MIN_INTERVAL_S=0.5`)
   and throttled responses never count as venue misses; paper cards now show
   real price impact (`priceImpact` field, not the deprecated `priceImpactPct`).
+  Replay workloads (paper daemon, `SHADOW=1` parity runs) use
+  `JUPITER_API_KEY_REPLAY` when set, keeping the primary key's rate budget
+  for the live-stream shadow and real-money paths.
 
 Safety defaults unchanged: shadow never executes; live requires
 `LIVE_TRADING=1 LIVE_CONFIRM=YES`; `data/LIVE_KILL` stops everything.

@@ -465,6 +465,39 @@ def test_live_shadow_paths_isolated():
     assert w2 == "custom_shadow", w2
 
 
+def test_jup_replay_key_preference():
+    import os
+    from unittest.mock import patch
+    from bot import jup
+
+    class _Ok:
+        ok = True
+
+        def json(self):
+            return {"inAmount": "1", "outAmount": "2", "routePlan": []}
+
+    seen = []
+
+    def _get(url, params=None, headers=None, timeout=None):
+        seen.append((headers or {}).get("x-api-key"))
+        return _Ok()
+
+    env = {"JUPITER_API_KEY": "main-key",
+           "JUPITER_API_KEY_REPLAY": "replay-key"}
+    with patch.dict(os.environ, env):
+        with patch("bot.jup.requests.get", side_effect=_get):
+            jup.order_quote("A", "B", 100)               # primary key
+            jup.order_quote("A", "B", 100, replay=True)  # replay key
+    assert seen == ["main-key", "replay-key"], seen
+    # replay falls back to the primary key when none is dedicated
+    seen.clear()
+    with patch.dict(os.environ, {"JUPITER_API_KEY": "main-key"}):
+        os.environ.pop("JUPITER_API_KEY_REPLAY", None)
+        with patch("bot.jup.requests.get", side_effect=_get):
+            jup.order_quote("A", "B", 100, replay=True)
+    assert seen == ["main-key"], seen
+
+
 def test_jup_decimals_cache_and_fail():
     from unittest.mock import patch
     from bot import jup

@@ -87,7 +87,7 @@ def shadow_paths(wallet: str, positions: str,
 
 def live_mark(mint: str, qty_base: int) -> float | None:
     """Live SOL value of qty_base via quote (marks to market)."""
-    q = order_quote(mint, SOL, qty_base)
+    q = order_quote(mint, SOL, qty_base, replay=L.shadow_enabled())
     if not q:
         return None
     try:
@@ -264,7 +264,8 @@ def main(require_live_flag: bool = True) -> None:
                 # (a mis-scaled tape must never trigger a real buy).
                 dec = token_decimals(mint, hk) or 6
                 tape_px = float(d["prices"][10])
-                pq = order_quote(SOL, mint, int(round(SIZE_SOL * LAMPORTS)))
+                pq = order_quote(SOL, mint, int(round(SIZE_SOL * LAMPORTS)),
+                                 replay=L.shadow_enabled())
                 if not pq or not pq.get("outAmount"):
                     skip["live:no-quote"] += 1
                     continue

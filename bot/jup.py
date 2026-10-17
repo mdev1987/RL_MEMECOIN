@@ -44,10 +44,20 @@ def token_decimals(mint: str, helius_key: str, timeout: float = 8.0) -> int | No
         return None
 
 
+def _api_key(replay: bool = False) -> str:
+    """Replay workloads may use a dedicated key (rate-limit isolation):
+    JUPITER_API_KEY_REPLAY when set, else the primary JUPITER_API_KEY."""
+    if replay:
+        k = os.environ.get("JUPITER_API_KEY_REPLAY")
+        if k:
+            return k
+    return os.environ.get("JUPITER_API_KEY", "")
+
+
 def order_quote(input_mint: str, output_mint: str, amount_base: int,
-                timeout: float = 10.0) -> dict | None:
+                timeout: float = 10.0, replay: bool = False) -> dict | None:
     """GET /swap/v2/order (read-only). Returns quote dict or None."""
-    api_key = os.environ.get("JUPITER_API_KEY", "")
+    api_key = _api_key(replay)
     if not api_key or amount_base <= 0:
         return None
     try:
