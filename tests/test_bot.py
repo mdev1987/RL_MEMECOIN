@@ -1014,6 +1014,29 @@ def test_live_exit_insufficient_funds_shaves():
     assert amounts == [1000, 1000, 980], amounts
 
 
+def test_wallet_live_start0_no_crash():
+    # parity soak 2026-10-17: live_loop builds Wallet(start=0.0) and the
+    # raw dd_stop/start division crashed the live loop on its first
+    # tradeable signal. start=0 now uses the absolute high-water stop.
+    import os
+    import tempfile
+    from bot.wallet import Wallet
+    p = os.path.join(tempfile.mkdtemp(), "w.json")
+    w = Wallet(path=p, start=0.0, daily_stop=10.0, dd_stop=0.10,
+               max_pos=0.01)
+    ok, why = w.can_open(0.01, "M")
+    assert ok, why
+    w.apply_close("M", -0.01)
+    w.apply_close("M2", +0.03)          # peak -> 0.02
+    for i in range(12):                 # dd_stop from the peak -> halt
+        w.apply_close(f"L{i}", -0.01)
+        if w.s.halted:
+            break
+    assert w.s.halted == "drawdown", w.s.halted
+    ok, why = w.can_open(0.01, "N")
+    assert not ok and why == "drawdown"
+
+
 def test_shadow_tape_bounded():
     # Live regression: tapes only marked done inside the entry gate meant
     # that with MAXOPEN positions stuck open, arrays grew unbounded until

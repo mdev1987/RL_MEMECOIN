@@ -100,6 +100,18 @@ class Wallet:
         ts = self.s.seen.get(mint)
         return ts is not None and (time.time() - ts) < self.seen_ttl
 
+    def _dd_hit(self):
+        """Drawdown halt test, safe when start is unset (live, start=0).
+
+        start>0 (paper): percentage of the starting balance.
+        start==0 (live ledger): absolute dd_stop SOL below the high-water
+        mark. Seen 2026-10-17: the raw dd_stop/start division crashed the
+        live loop on its first tradeable signal during the parity soak.
+        """
+        if self.s.start > 0:
+            return self.s.max_dd_pct >= self.dd_stop / self.s.start * 100
+        return self.s.peak > 0 and self.s.balance <= self.s.peak - self.dd_stop
+
     def can_open(self, size, mint):
         self._reset_window()
         if self.s.halted:
@@ -113,7 +125,7 @@ class Wallet:
         if self.s.day_pnl <= -self.daily_stop:
             self.s.halted = "daily-loss"
             return False, "daily-loss"
-        if self.s.max_dd_pct >= self.dd_stop / self.s.start * 100:
+        if self._dd_hit():
             self.s.halted = "drawdown"
             return False, "drawdown"
         return True, "ok"
@@ -127,7 +139,7 @@ class Wallet:
         self.s.seen[mint] = time.time()
         if self.s.day_pnl <= -self.daily_stop:
             self.s.halted = "daily-loss"
-        if self.s.balance <= self.s.start - self.dd_stop:
+        if self._dd_hit():
             self.s.halted = "drawdown"
         self.save()
         return self.s.halted
@@ -145,7 +157,7 @@ class Wallet:
             self.s.losses += 1
         if self.s.day_pnl <= -self.daily_stop:
             self.s.halted = "daily-loss"
-        if self.s.balance <= self.s.start - self.dd_stop:
+        if self._dd_hit():
             self.s.halted = "drawdown"
         self.save()
         return self.s.halted
