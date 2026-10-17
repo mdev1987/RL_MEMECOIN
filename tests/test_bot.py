@@ -1014,6 +1014,20 @@ def test_live_exit_insufficient_funds_shaves():
     assert amounts == [1000, 1000, 980], amounts
 
 
+def test_venue_miss_insufficient_funds_is_ours():
+    # parity soak 2 (2026-10-17): five token-less "Insufficient funds"
+    # build misses were counted as venue misses and rug-closed a shadow
+    # position at -100% that the venue still quoted.
+    from bot.live import NoQuote, venue_miss
+    assert not venue_miss(NoQuote(
+        "no executable tx: no transaction "
+        "(router=metis code=1 Insufficient funds)"))
+    assert venue_miss(NoQuote(
+        "no executable tx: no transaction (router=metis)"))
+    assert not venue_miss(NoQuote("order HTTP 429 throttled"))
+    assert not venue_miss(NoQuote("order HTTP 401 unauthorized"))
+
+
 def test_wallet_apply_open_dedup_and_rate():
     # parity soak 2026-10-17: successful live opens never marked seen /
     # clocked the hour, so dedup and the hourly rate limit never bound.

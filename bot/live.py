@@ -168,6 +168,12 @@ def venue_miss(exc: BaseException) -> bool:
     low = s.lower()
     if "throttled" in low:
         return False
+    if "insufficient funds" in low:
+        # our side, not the venue: the wallet could not build the tx
+        # (shadow never holds tokens; a real mismatch is handled by the
+        # shaved retry). Parity soak 2 (2026-10-17) booked a false -100%
+        # rug from five of these.
+        return False
     if any(x in low for x in VENUE_MISS_MARKERS):
         return True
     if "order http 400" in low and any(x in low

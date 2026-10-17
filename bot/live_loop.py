@@ -22,6 +22,8 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
+from types import SimpleNamespace
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -177,12 +179,26 @@ def main(require_live_flag: bool = True) -> None:
             if why is None:
                 continue
             try:
-                rc = L.place_order(mint, SOL, p["qty_base"], p["size"])
+                if L.shadow_enabled():
+                    # Shadow wallet never takes token delivery, so a sell
+                    # build can never succeed ("Insufficient funds" ->
+                    # false rug; parity soak 2, 2026-10-17). Close at the
+                    # read-only quote instead — same estimator as
+                    # shadow_loop/paper; builds are exercised in dust.
+                    q = order_quote(mint, SOL, p["qty_base"]) or {}
+                    out = str(q.get("outAmount", "") or "")
+                    rc = SimpleNamespace(
+                        signature="shadow", shadow=True,
+                        total_in=str(int(round(p["size"] * LAMPORTS))),
+                        total_out=out, out_amount=out)
+                else:
+                    rc = L.place_order(mint, SOL, p["qty_base"], p["size"])
                 got = None
-                if not rc.shadow:
-                    tot = getattr(rc, "total_out", "")
-                    if str(tot or "").isdigit() and int(tot) > 0:
-                        got = int(tot) / LAMPORTS  # real proceeds, not marks
+                tot = getattr(rc, "total_out", "")
+                if str(tot or "").isdigit() and int(tot) > 0:
+                    v = int(tot) / LAMPORTS  # executed / quote proceeds
+                    if v <= mark * 1.5:      # stale quote, not a fill
+                        got = v
                 pnl = (got if got is not None else mark) - p["size"]
                 w.apply_close(mint, pnl)
                 ledger_append(LEDGER, ledger_row(
