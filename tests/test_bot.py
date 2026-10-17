@@ -1034,7 +1034,7 @@ def test_wallet_live_start0_no_crash():
             break
     assert w.s.halted == "drawdown", w.s.halted
     ok, why = w.can_open(0.01, "N")
-    assert not ok and why == "drawdown"
+    assert not ok and why.startswith("halted:drawdown"), why
 
 
 def test_shadow_tape_bounded():
