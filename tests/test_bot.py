@@ -1014,6 +1014,24 @@ def test_live_exit_insufficient_funds_shaves():
     assert amounts == [1000, 1000, 980], amounts
 
 
+def test_shadow_exit_receipt_uses_quote():
+    # SHADOW sell exits close at the read-only quote: the wallet holds no
+    # tokens, so builds would false-rug (parity soak 2, 2026-10-17).
+    from bot import live_loop as LL
+    orig = LL.order_quote
+    try:
+        LL.order_quote = lambda *a, **k: {"outAmount": "12345678"}
+        r = LL.shadow_exit_receipt("Mint", 10 ** 9, 0.01)
+        assert r.shadow and r.signature == "shadow"
+        assert r.total_out == "12345678"
+        assert r.total_in == str(int(round(0.01 * LL.LAMPORTS)))
+        LL.order_quote = lambda *a, **k: {}
+        r2 = LL.shadow_exit_receipt("Mint", 10 ** 9, 0.01)
+        assert r2.total_out == ""      # falls back to the tape mark
+    finally:
+        LL.order_quote = orig
+
+
 def test_venue_miss_insufficient_funds_is_ours():
     # parity soak 2 (2026-10-17): five token-less "Insufficient funds"
     # build misses were counted as venue misses and rug-closed a shadow

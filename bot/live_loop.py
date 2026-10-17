@@ -87,6 +87,23 @@ def shadow_paths(wallet: str, positions: str,
             _s(ledger, ".jsonl"))
 
 
+def shadow_exit_receipt(mint: str, qty_base: int, size_sol: float):
+    """Receipt-shaped stub for SHADOW sell exits.
+
+    The shadow wallet never takes token delivery, so a sell build cannot
+    succeed ("Insufficient funds" -> false rug; parity soak 2,
+    2026-10-17). Shadow exits close at the read-only quote instead — the
+    same estimator as shadow_loop/paper; the token-dependent build path is
+    exercised in dust.
+    """
+    q = order_quote(mint, SOL, qty_base) or {}
+    out = str(q.get("outAmount", "") or "")
+    return SimpleNamespace(
+        signature="shadow", shadow=True,
+        total_in=str(int(round(size_sol * LAMPORTS))),
+        total_out=out, out_amount=out)
+
+
 def live_mark(mint: str, qty_base: int) -> float | None:
     """Live SOL value of qty_base via quote (marks to market)."""
     q = order_quote(mint, SOL, qty_base, replay=L.shadow_enabled())
@@ -180,17 +197,7 @@ def main(require_live_flag: bool = True) -> None:
                 continue
             try:
                 if L.shadow_enabled():
-                    # Shadow wallet never takes token delivery, so a sell
-                    # build can never succeed ("Insufficient funds" ->
-                    # false rug; parity soak 2, 2026-10-17). Close at the
-                    # read-only quote instead — same estimator as
-                    # shadow_loop/paper; builds are exercised in dust.
-                    q = order_quote(mint, SOL, p["qty_base"]) or {}
-                    out = str(q.get("outAmount", "") or "")
-                    rc = SimpleNamespace(
-                        signature="shadow", shadow=True,
-                        total_in=str(int(round(p["size"] * LAMPORTS))),
-                        total_out=out, out_amount=out)
+                    rc = shadow_exit_receipt(mint, p["qty_base"], p["size"])
                 else:
                     rc = L.place_order(mint, SOL, p["qty_base"], p["size"])
                 got = None
