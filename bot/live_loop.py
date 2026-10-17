@@ -178,7 +178,12 @@ def main(require_live_flag: bool = True) -> None:
                 continue
             try:
                 rc = L.place_order(mint, SOL, p["qty_base"], p["size"])
-                pnl = mark - p["size"]
+                got = None
+                if not rc.shadow:
+                    tot = getattr(rc, "total_out", "")
+                    if str(tot or "").isdigit() and int(tot) > 0:
+                        got = int(tot) / LAMPORTS  # real proceeds, not marks
+                pnl = (got if got is not None else mark) - p["size"]
                 w.apply_close(mint, pnl)
                 ledger_append(LEDGER, ledger_row(
                     file="live", mint=mint, reason="live-" + why,
@@ -310,6 +315,7 @@ def main(require_live_flag: bool = True) -> None:
                                   "entry_px": float(d["prices"][10]),
                                   "peak": 0.0, "sig": rc.signature}
                     save_positions(poss)
+                    w.apply_open(mint)  # dedup + hourly rate limit
                     ntf.send_open(ca=mint, name=mint[:12],
                                   price=float(d["prices"][10]),
                                   size_sol=SIZE_SOL,
@@ -329,6 +335,15 @@ def main(require_live_flag: bool = True) -> None:
                                        f"live entries degraded: "
                                        f"{str(exc)[:120]}")
                 except Exception as exc:
+                    msg = str(exc)
+                    if msg.startswith(("guard: impact", "guard: fee payer")):
+                        # routine pre-trade rejection (thin pool / gasless
+                        # tx): counted skip like paper's `filtered`, never
+                        # an alert (parity soak 2026-10-17 spammed alerts
+                        # for a -100% impact pool).
+                        skip["live:guard"] += 1
+                        log.info("LIVE skip guard %s: %s", mint[:8], msg)
+                        continue
                     log.error("LIVE BUY FAILED %s: %s", mint[:8], exc)
                     ntf.send_alert("🔴 LIVE BUY FAILED", f"{mint[:8]}: {exc}")
             log.info("cycle done skip=%s sleeping %ds",

@@ -130,6 +130,19 @@ class Wallet:
             return False, "drawdown"
         return True, "ok"
 
+    def apply_open(self, mint, cost_sol=0.0):
+        """Successful open: clock the hour counter and mark the mint seen.
+
+        Live finding 2026-10-17 (parity soak): the live loop never recorded
+        successful opens, so `can_open`'s dedup and hourly rate limit never
+        bound — the same mint was bought four times in 40 minutes.
+        """
+        self._reset_window()
+        self.s.hour_trades += 1
+        self.s.seen[mint] = time.time()
+        self.save()
+        return self.s.halted
+
     def apply_fee(self, mint, cost_sol):
         """Failed-tx path: pay fixed costs only, no position, no win/loss."""
         self._reset_window()

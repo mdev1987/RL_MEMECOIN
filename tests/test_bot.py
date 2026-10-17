@@ -1014,6 +1014,25 @@ def test_live_exit_insufficient_funds_shaves():
     assert amounts == [1000, 1000, 980], amounts
 
 
+def test_wallet_apply_open_dedup_and_rate():
+    # parity soak 2026-10-17: successful live opens never marked seen /
+    # clocked the hour, so dedup and the hourly rate limit never bound.
+    import os
+    import tempfile
+    from bot.wallet import Wallet
+    p = os.path.join(tempfile.mkdtemp(), "w.json")
+    w = Wallet(path=p, start=1.0, daily_stop=1.0, dd_stop=1.0, max_pos=0.01,
+               max_per_hour=2)
+    assert w.can_open(0.01, "M")[0]
+    w.apply_open("M")
+    ok, why = w.can_open(0.01, "M")
+    assert not ok and why == "duplicate", why
+    w.apply_open("N")
+    ok, why = w.can_open(0.01, "P")
+    assert not ok and why == "rate-limit", why
+    assert w.s.hour_trades == 2
+
+
 def test_wallet_live_start0_no_crash():
     # parity soak 2026-10-17: live_loop builds Wallet(start=0.0) and the
     # raw dd_stop/start division crashed the live loop on its first
