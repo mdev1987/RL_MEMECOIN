@@ -428,13 +428,28 @@ def test_jup_quote_fail_open():
 
         def json(self):
             return {"inAmount": "1000", "outAmount": "555",
-                    "priceImpactPct": "1.2",
+                    "priceImpact": "-0.3", "priceImpactPct": "1.2",
                     "routePlan": [{"percent": 100,
                                    "swapInfo": {"label": "PumpSwap"}}]}
     with patch.dict(os.environ, {"JUPITER_API_KEY": "x"}):
         with patch("bot.jup.requests.get", return_value=_Ok()):
             q = jup.order_quote("A", "B", 1000)
             assert q["outAmount"] == "555" and q["route"] == [(100, "PumpSwap")]
+            # the deprecated priceImpactPct must not shadow the real field
+            assert q["priceImpact"] == "-0.3"
+            assert "-0.3%" in jup.fmt_quote(q, "buy")
+
+
+def test_jup_price_diverges():
+    from bot.jup import price_diverges
+    assert not price_diverges(1.0, 1.0)
+    assert not price_diverges(1.0, 0.4)     # inside the 3x band
+    assert not price_diverges(1.0, 2.9)
+    assert price_diverges(2e-5, 5.967e-8)   # the live 337x ghost split
+    assert price_diverges(1.0, 5.0)
+    assert price_diverges(1.0, 0.1)
+    assert price_diverges(0.0, 1.0)
+    assert price_diverges(1.0, 0.0)
 
 
 def test_jup_decimals_cache_and_fail():
@@ -464,6 +479,11 @@ def test_live_guards():
     assert ok, why
     ok, why = live.check_guards(_live_order(priceImpact="-6.0"), "TAKER", 1.0)
     assert not ok and "impact" in why, why
+    # exits are never blocked by the entry impact cap: refusing to sign a
+    # sell leaves capital stuck (seen live: -16% impact on a stuck exit).
+    ok, why = live.check_guards(_live_order(priceImpact="-16.0"), "TAKER",
+                                1.0, is_exit=True)
+    assert ok, why
     ok, why = live.check_guards(
         _live_order(outAmount="7000000"), "TAKER", 1.0)
     assert not ok and "min-out" in why, why
@@ -769,6 +789,56 @@ def test_live_order_throttle():
     live._last_order_ts = 0.0
 
 
+def test_live_exit_build_retry_and_noquote():
+    import os
+    from unittest.mock import patch
+    from bot import live
+
+    class _KP:
+        def pubkey(self):
+            return "TAKER"
+
+        def sign_message(self, msg):
+            class _S:
+                def verify(self, p, m):
+                    return True
+            return _S()
+
+    no_tx = _live_order()
+    del no_tx["transaction"]
+    env = {"LIVE_MAX_SOL": "1.0", "JUP_MIN_INTERVAL_S": "0",
+           "LIVE_EXIT_SLIPPAGE_BPS": "2500", "LIVE_WIDE_RETRY_BPS": "5000",
+           "LIVE_SLIPPAGE_BPS": "100"}
+    with patch.dict(os.environ, env):
+        with patch("bot.live.killed", return_value=False), \
+             patch("bot.live._load_keypair", return_value=_KP()), \
+             patch("bot.live.sign_order", return_value="c2ln"):
+            # sell (output SOL): exit slippage 2500; a route without tx
+            # retries once wider (5000) and then succeeds.
+            with patch("bot.live.get_order",
+                       side_effect=[no_tx, _live_order()]) as go:
+                rc = live.place_order("A", live.SOL, 100, 0.01, shadow=True)
+                assert rc.shadow
+                assert go.call_count == 2
+                assert go.call_args_list[0][0][4] == 2500
+                assert go.call_args_list[1][0][4] == 5000
+            # persistent no-tx on a sell: routine NoQuote, never a hard
+            # failure (callers back off and retry; no stuck position).
+            with patch("bot.live.get_order",
+                       side_effect=[no_tx, no_tx]) as go:
+                try:
+                    live.place_order("A", live.SOL, 100, 0.01, shadow=True)
+                    raise SystemExit("must raise NoQuote")
+                except live.NoQuote as e:
+                    assert "no executable tx" in str(e), e
+                assert go.call_count == 2
+            # buys keep the tight default slippage (no exit relaxation).
+            with patch("bot.live.get_order",
+                       side_effect=[_live_order()]) as go:
+                live.place_order("A", "B", 100, 0.01, shadow=True)
+                assert go.call_args_list[0][0][4] == 100
+
+
 def test_live_refuses_v1():
     from bot import live
     o = _live_order(transactionVersion=1)
@@ -868,6 +938,17 @@ def test_shadow_sweep_due():
     # hold-end wins over stale on old positions
     assert sweep_due({"t": now - 4000, "last_ts": (now - 9999) * 1000},
                      now) == "hold-end"
+
+
+def test_shadow_mark_anomaly_guard():
+    from bot.shadow_loop import mark_suspect
+    assert not mark_suspect(0.016, 0.01)    # +60%: TP territory, fine
+    assert not mark_suspect(0.06, 0.01)     # +500%: a runner, fine
+    assert not mark_suspect(0.002, 0.01)    # -80%: SL fires far earlier
+    assert mark_suspect(3.37, 0.01)         # the live 337x ghost print
+    assert mark_suspect(0.0004, 0.01)       # beyond any sane loss band
+    assert mark_suspect(0.0, 0.01)
+    assert mark_suspect(0.01, 0.0)
 
 
 def test_rug_give_up():

@@ -30,7 +30,8 @@ load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=True)
 from bot.replay_eval import load_paths
 from bot.wallet import Wallet
 from bot.ledger import append as ledger_append, row as ledger_row
-from bot.jup import token_decimals, SOL, LAMPORTS
+from bot.jup import (order_quote, price_diverges, token_decimals, SOL,
+                     LAMPORTS)
 from bot import live as L
 from bot import signals as S
 from notifier import get_notifier
@@ -75,7 +76,6 @@ def save_positions(p: dict) -> None:
 
 def live_mark(mint: str, qty_base: int) -> float | None:
     """Live SOL value of qty_base via quote (marks to market)."""
-    from bot.jup import order_quote
     q = order_quote(mint, SOL, qty_base)
     if not q:
         return None
@@ -183,6 +183,11 @@ def main(require_live_flag: bool = True) -> None:
                 # `filtered` — counted, never alerted; cool down retries.
                 # After repeated misses the exit is unclosable (dead mint):
                 # book the rug so the corpse can't clog the book.
+                if "throttled" in str(exc):
+                    poss[mint]["cool_until"] = time.time() + 2.0
+                    save_positions(poss)
+                    log.info("LIVE skip no-quote %s: %s", mint[:8], exc)
+                    continue
                 skip["live:no-quote"] += 1
                 poss[mint]["cool_until"] = time.time() + 60.0
                 misses = poss[mint].get("misses", 0) + 1
@@ -232,11 +237,29 @@ def main(require_live_flag: bool = True) -> None:
                     skip[f"wallet:{why_not}"] += 1
                     continue
                 mint = d.get("mint", "?")
+                # data-quality preflight BEFORE spending real SOL: the
+                # read-only quote must agree with the tape the signal used
+                # (a mis-scaled tape must never trigger a real buy).
+                dec = token_decimals(mint, hk) or 6
+                tape_px = float(d["prices"][10])
+                pq = order_quote(SOL, mint, int(round(SIZE_SOL * LAMPORTS)))
+                if not pq or not pq.get("outAmount"):
+                    skip["live:no-quote"] += 1
+                    continue
+                try:
+                    vpx = SIZE_SOL / (int(pq["outAmount"]) / (10 ** dec))
+                except Exception:
+                    skip["live:no-quote"] += 1
+                    continue
+                if price_diverges(tape_px, vpx):
+                    skip["live:ghost"] += 1
+                    log.warning("LIVE entry ghost %s tape_px=%s venue_px=%s "
+                                "(skipped)", mint[:8], tape_px, vpx)
+                    continue
                 try:
                     rc = L.place_order(SOL, mint,
                                        int(round(SIZE_SOL * LAMPORTS)),
                                        SIZE_SOL)
-                    dec = token_decimals(mint, hk) or 6
                     qty = int(int(rc.out_amount) if str(rc.out_amount).isdigit()
                               else 0)
                     poss = load_positions()

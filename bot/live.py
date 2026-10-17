@@ -167,11 +167,21 @@ def get_order(input_mint: str, output_mint: str, amount_base: int,
     return o
 
 
-def check_guards(o: dict, taker: str, max_sol: float) -> tuple[bool, str]:
-    """Pre-sign policy checks. Returns (ok, reason). Fail-closed."""
+def check_guards(o: dict, taker: str, max_sol: float,
+                 is_exit: bool = False) -> tuple[bool, str]:
+    """Pre-sign policy checks. Returns (ok, reason). Fail-closed.
+
+    is_exit=True relaxes the impact cap (LIVE_EXIT_MAX_IMPACT_PCT,
+    default 100): refusing to sign a sell because the quote looks bad
+    leaves capital stuck in a dying mint — worse than exiting badly.
+    The venue-side slippage cap still bounds the execution price.
+    """
     try:
         impact = float(o.get("priceImpact") or 0.0)  # percentage points
-        if abs(impact) > float(os.environ.get("LIVE_MAX_IMPACT_PCT", "5.0")):
+        icap = float(os.environ.get(
+            "LIVE_EXIT_MAX_IMPACT_PCT" if is_exit else "LIVE_MAX_IMPACT_PCT",
+            "100.0" if is_exit else "5.0"))
+        if abs(impact) > icap:
             return False, f"impact {impact:.2f}% over cap"
         if int(o.get("outAmount", "0")) < int(o.get("otherAmountThreshold", "0")):
             return False, "outAmount below min-out threshold"
@@ -252,6 +262,9 @@ def place_order(input_mint: str, output_mint: str, amount_base: int,
     """Full guarded flow. Raises on any guard/execution failure.
 
     shadow=True: sign + verify only, return Receipt(shadow=True), no /execute.
+    Exits (output SOL) default to LIVE_EXIT_SLIPPAGE_BPS=2500 and a
+    relaxed impact cap; a "route without tx" retries once for exits at
+    LIVE_WIDE_RETRY_BPS then raises NoQuote (routine venue miss).
     """
     if killed():
         raise RuntimeError("LIVE_KILL present — refusing")
@@ -260,11 +273,31 @@ def place_order(input_mint: str, output_mint: str, amount_base: int,
         raise RuntimeError(f"size {size_sol} over LIVE_MAX_SOL {max_sol}")
     kp = _load_keypair()
     taker = str(kp.pubkey())
-    slippage = os.environ.get("LIVE_SLIPPAGE_BPS", "100")
+    is_exit = output_mint == SOL
+    # Exits must be buildable: default much wider than entries so a thin
+    # book can't block the sell ("no transaction" seen live on exits).
+    if is_exit:
+        slippage = os.environ.get("LIVE_EXIT_SLIPPAGE_BPS", "2500")
+    else:
+        slippage = os.environ.get("LIVE_SLIPPAGE_BPS", "100")
     slippage = "auto" if slippage == "auto" else int(slippage)
     tip = int(os.environ.get("LIVE_JITO_TIP_LAMPORTS", "0") or 0)
     o = get_order(input_mint, output_mint, amount_base, taker, slippage, tip)
-    ok, why = check_guards(o, taker, max_sol)
+    ok, why = check_guards(o, taker, max_sol, is_exit=is_exit)
+    if not ok and why.startswith("no transaction"):
+        # Venue returned a route but no executable tx (usually the
+        # slippage cap is too tight for the book). Exits retry once wider,
+        # then classify as a routine venue miss so callers back off and
+        # retry later instead of hard-failing (live: avoids stuck
+        # positions). Entries just skip: a wide cap must never buy.
+        cur = 0 if isinstance(slippage, str) else int(slippage)
+        wide = int(os.environ.get("LIVE_WIDE_RETRY_BPS", "5000"))
+        if is_exit and cur < wide:
+            o = get_order(input_mint, output_mint, amount_base, taker,
+                          wide, tip)
+            ok, why = check_guards(o, taker, max_sol, is_exit=is_exit)
+        if not ok and why.startswith("no transaction"):
+            raise NoQuote(f"no executable tx: {why}")
     if not ok:
         raise RuntimeError(f"guard: {why}")
     signed = sign_order(o, kp)

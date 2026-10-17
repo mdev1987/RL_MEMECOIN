@@ -29,7 +29,8 @@ load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=True)
 from bot.replay_eval import is_pump_pool
 from bot.wallet import Wallet
 from bot.ledger import append as ledger_append, row as ledger_row
-from bot.jup import token_decimals, SOL, LAMPORTS
+from bot.jup import (order_quote, price_diverges, token_decimals, SOL,
+                     LAMPORTS)
 from bot import live as L
 from bot import signals as S
 from notifier import get_notifier
@@ -62,6 +63,23 @@ def sweep_due(p: dict, now: float, time_s: float = 3600.0,
     if idle > stale_s:
         return "stale"
     return None
+
+
+MARK_HI = 10.0   # mark/cost above this is suspect without venue agreement
+MARK_LO = 0.1
+
+
+def mark_suspect(mark: float, size: float) -> bool:
+    """True when a tape mark is implausibly far from cost basis.
+
+    A single print can be mis-scaled (seen live: a 337x split between
+    the tape price and what the venue would actually pay). Such marks
+    must never update peak or trigger exits on their own.
+    """
+    if size <= 0 or mark <= 0:
+        return True
+    r = mark / size
+    return r > MARK_HI or r < MARK_LO
 
 
 def new_tape(mint: str, ts: int):
@@ -170,9 +188,36 @@ def main() -> None:
                 # live mark for open paper positions (last-print marks)
                 if m in poss and t["prices"]:
                     p = poss[m]
-                    p["last_px"] = px
                     p["last_ts"] = ts
                     mark = px * p["qty_tokens"]
+                    if mark_suspect(mark, p["size"]):
+                        # mis-scaled print: corroborate with the venue
+                        # (read-only) before acting on it; at most once a
+                        # minute so one bad mint can't storm the API.
+                        now_t = time.time()
+                        if now_t < p.get("corro_until", 0.0):
+                            continue
+                        p["corro_until"] = now_t + 60.0
+                        q = order_quote(m, SOL, p["qty_base"])
+                        vm = None
+                        if q and q.get("outAmount"):
+                            vm = int(q["outAmount"]) / LAMPORTS
+                        p["anomalies"] = p.get("anomalies", 0) + 1
+                        if not vm:
+                            if p["anomalies"] <= 3:
+                                log.warning(
+                                    "SHADOW mark anomaly %s ratio=%.0fx "
+                                    "venue=no-quote (skipped)",
+                                    m[:8], mark / p["size"])
+                            continue
+                        if p["anomalies"] <= 3:
+                            log.warning(
+                                "SHADOW mark anomaly %s ratio=%.0fx "
+                                "-> venue %.2fx (venue mark used)",
+                                m[:8], mark / p["size"], vm / p["size"])
+                        mark = vm
+                    p["last_px"] = (mark / p["qty_tokens"] if p["qty_tokens"]
+                                    else px)
                     p["peak"] = max(p.get("peak", 0.0), mark)
                     why = S.decide_exit(p["size"], p["peak"], mark,
                                         time.time() - p["t"])
@@ -191,6 +236,9 @@ def main() -> None:
                     except L.NoQuote as exc:
                         log.info("SHADOW exit no-quote %s: %s",
                                  m[:8], exc)
+                        if "throttled" in str(exc):
+                            p["cool_until"] = time.time() + 2.0
+                            continue  # politeness gap, not a venue miss
                         p["cool_until"] = time.time() + 60.0
                         p["misses"] = p.get("misses", 0) + 1
                         if L.rug_give_up(p["misses"]):
@@ -219,6 +267,24 @@ def main() -> None:
                     ok, why_not = w.can_open(SIZE_SOL, m)
                     if not ok:
                         continue
+                    # data-quality preflight: a read-only venue quote must
+                    # broadly agree with the tape price the signal used; a
+                    # mis-scaled tape (seen live: 337x) would otherwise buy
+                    # a ghost. One extra quote per candidate — rare.
+                    dec = token_decimals(m, hk) or 6
+                    pq = order_quote(SOL, m,
+                                     int(round(SIZE_SOL * LAMPORTS)))
+                    if not pq or not pq.get("outAmount"):
+                        continue  # unquotable now: same as NoQuote below
+                    try:
+                        vpx = SIZE_SOL / (int(pq["outAmount"]) / (10 ** dec))
+                    except Exception:
+                        continue
+                    if price_diverges(t["prices"][ENTRY_N - 1], vpx):
+                        log.warning(
+                            "SHADOW entry ghost %s tape_px=%s venue_px=%s "
+                            "(skipped)", m[:8], t["prices"][ENTRY_N - 1], vpx)
+                        continue
                     try:
                         rc = L.place_order(
                             SOL, m, int(round(SIZE_SOL * LAMPORTS)),
@@ -229,7 +295,6 @@ def main() -> None:
                         log.warning("SHADOW entry sign failed %s: %s",
                                     m[:8], exc)
                         continue
-                    dec = token_decimals(m, hk) or 6
                     try:
                         qty_base = int(rc.out_amount)
                     except Exception:
@@ -240,6 +305,7 @@ def main() -> None:
                                "qty_base": qty_base,
                                "qty_tokens": qty_base / (10 ** dec),
                                "entry_px": t["prices"][ENTRY_N - 1],
+                               "entry_vpx": vpx,
                                "peak": 0.0, "sig": rc.signature}
                     ntf.send_open(
                         ca=m, name=m[:12], price=t["prices"][ENTRY_N - 1],
@@ -249,8 +315,8 @@ def main() -> None:
                         max_positions=MAXOPEN, win_rate=w.s.win_rate,
                         dex="jupiter", buys=len(t["prices"]),
                         jup="🕶️ SHADOW BUY (signed-never-sent)")
-                    log.info("SHADOW BUY %s epx=%s dec=%s qty_base=%s",
-                             m, t["prices"][ENTRY_N - 1], dec, qty_base)
+                    log.info("SHADOW BUY %s epx=%s vpx=%.3g dec=%s qty_base=%s",
+                             m, t["prices"][ENTRY_N - 1], vpx, dec, qty_base)
                 now = time.time()
                 if now - last_prune > PRUNE_S:
                     cutoff = now * 1000 - IDLE_DROP_S * 1000
@@ -270,6 +336,18 @@ def main() -> None:
                             continue
                         mark = p.get("last_px", 0.0) * p["qty_tokens"]
                         if mark <= 0:
+                            # never got a trustworthy print: price the exit
+                            # with a read-only venue quote instead of
+                            # holding the slot forever.
+                            q = order_quote(mk, SOL, p["qty_base"])
+                            if q and q.get("outAmount"):
+                                mark = int(q["outAmount"]) / LAMPORTS
+                        if mark <= 0:
+                            p["misses"] = p.get("misses", 0) + 1
+                            if L.rug_give_up(p["misses"]):
+                                log.warning(
+                                    "SHADOW rug-close (no mark) %s", mk[:8])
+                                close_position(mk, "rug", 0.0)
                             continue
                         try:
                             rc = L.place_order(
@@ -280,6 +358,8 @@ def main() -> None:
                         except L.NoQuote as exc:
                             log.info("SHADOW sweep no-quote %s: %s",
                                      mk[:8], exc)
+                            if "throttled" in str(exc):
+                                continue  # politeness gap, not a miss
                             p["misses"] = p.get("misses", 0) + 1
                             if L.rug_give_up(p["misses"]):
                                 log.warning(

@@ -64,6 +64,9 @@ def order_quote(input_mint: str, output_mint: str, amount_base: int,
             return None
         return {
             "inAmount": o.get("inAmount"), "outAmount": o.get("outAmount"),
+            # /order returns priceImpact (percentage points); the older
+            # priceImpactPct is deprecated and fmt_quote ignores it.
+            "priceImpact": o.get("priceImpact"),
             "priceImpactPct": o.get("priceImpactPct"),
             "route": [(s.get("percent"),
                        (s.get("swapInfo") or {}).get("label"))
@@ -85,3 +88,17 @@ def fmt_quote(q: dict | None, side: str) -> str | None:
                 f"(impact `{q.get('priceImpact', '?')}%` via {route or '?'})")
     except Exception:
         return None
+
+
+def price_diverges(tape_px: float, venue_px: float,
+                   factor: float = 3.0) -> bool:
+    """True when a tape price is implausibly far from the venue quote.
+
+    Both are SOL-per-token. A mis-scaled tape (seen live: 337x split)
+    would otherwise trigger entries on ghost data; non-positive values
+    are always suspect. 3x is generous: real quote-vs-print drift on a
+    fast move is well under 2x, and the observed ghost was 337x.
+    """
+    if tape_px <= 0 or venue_px <= 0:
+        return True
+    return tape_px > factor * venue_px or tape_px < venue_px / factor
