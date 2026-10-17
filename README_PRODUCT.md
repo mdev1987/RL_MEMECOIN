@@ -33,7 +33,11 @@ jumps (regression: 2026-10-12 +26154% event is now `bad-tick`, never booked).
   (overfit); needs fresh out-of-sample data.
 - v2 jupiter (+50bps/side, 200k): G1 PASS (lb +0.00037). v2 jito (0.001 SOL tip): FAIL — tip floor not viable at 0.05 size, use swqos.
 - Walk-forward: mint-split train +0.00067 / test +0.00673; time-split train +0.00264 / test +0.00530 (test ≥ train, no overfit).
-- Paper forward (recycled replay, realistic costs): 1.0316 → ~1.20 (+16%+) since rotation fix; weak evidence (same files).
+- Paper forward (recycled replay, realistic costs, `meme-paper` daemon):
+  wallet 1.283889 reconciles exactly as 1.0 + the last 34 closes
+  (sum +0.2839, W18/L16); the full ledger holds 213 closes +1.3117.
+  Same files as in-sample, so this is a sanity check, not independent
+  evidence.
 - **Out-of-sample (frozen v2, never tuned on): 10/12 + 10/13 fresh days from
   replay server — OOS-G1 mean +0.00366 / lower95 +0.00121 PASS, 27 trades,
   win 59%, mean_traded +8%.** Config locked before download; script
@@ -138,8 +142,11 @@ failures; all are now fixed and covered by tests (56 total):
   now use the executed buy's actual received tokens (`totalOutputAmount`)
   as `qty_base` instead of the quote. Test:
   `test_live_exit_insufficient_funds_shaves`.
-- **Fresh OOS (frozen config, Oct 14-17 2026, 15 hour-clusters, 238 trades,
-  1.2M lines/hour): mean +0.00113, lower95 +0.00040 → gate pass.**
+- **Fresh OOS (frozen config, Oct 14-17 2026, 17 hour-clusters, 265 trades,
+  1.2M lines/hour): mean +0.00113, lower95 +0.00046 → gate pass.**
+  The two newest hours (Oct 17 03:00, 04:00, downloaded after every
+  parameter was frozen) pass individually: +0.00170 / +0.00051,
+  16 / 11 trades. Evidence: `eval/results_oos_fresh17_1200000.json`.
   In-sample pooled-14 was +0.00196: the edge is smaller on fresh data but
   still positive and significant. Evidence: `eval/results_oos_fresh15_1200000.json`.
 
