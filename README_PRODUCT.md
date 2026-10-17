@@ -225,7 +225,35 @@ Evidence: `eval/shadow_run77_report.txt`.
   Evidence: `eval/shadow_run79_report.txt`,
   `eval/parity_soak3_report.txt`.
 
-71 tests total.
+### realtime entry postmortem (same day) — shadow gated late windows
+
+Tape reconstruction of all 23 live shadow entries (gate print located by
+exact price match against the logged `epx`; ages from `create` events
+where in range):
+
+- **21 of 23 gates fired 3-3522 prints into the mint's life**, not at
+  birth: the 5,000-tape table saturated (completed tapes lingered 30
+  min), so prints of new mints were silently dropped and the "first 11
+  prints" window became an arbitrary mid-life slice. Those slices are
+  micro-bursts (span 1-60 s, +5..+65 %); buying their tops is why stops
+  filled in 9-275 s. Ages at entry (lower bounds): most ≥ 1 h,
+  `8Jef1ow6` 67 min, several ≥ 9 h.
+- Case study `EmoRR2DM`: first 10 prints dropped; birth window ran
+  **+3966 %**; the gate fired at a +9 % micro-spike 26 s after birth
+  (its last print a sell) and stopped at −11.2 % in 9.3 s; price then
+  recovered to +33.5 % above the entry within 5 min.
+- Fix (correctness only; gate/exits/size frozen): `tape_should_start` —
+  a tape starts only for mints whose `create` event we saw (verified on
+  the live stream by probe: ~0.44 creates/s), **one tape per mint
+  ever**; completed non-position tapes are popped immediately; creates
+  TTL 1 h; taped-registry soft cap; cap-hit warning. Test:
+  `test_shadow_tape_birth_anchor`.
+- This reframes the earlier live samples: their P&L (−6.2 %/trade over
+  17 closes) measured a mis-anchored variant, not the v3 early window.
+  `data/shadow_run80_curve.tsv` holds the partial run80 baseline; the
+  fresh 24 h birth-anchored shadow (run81) is the realtime verdict now.
+
+72 tests total.
 
 Safety defaults unchanged: shadow never executes; live requires
 `LIVE_TRADING=1 LIVE_CONFIRM=YES`; `data/LIVE_KILL` stops everything.

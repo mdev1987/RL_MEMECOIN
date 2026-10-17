@@ -5,6 +5,13 @@ SHADOW Jupiter order (full /order + guards + local sign, NEVER executes)
 -> paper positions tracked on live marks -> shared exit rule ->
 shadow ledger + Telegram cards (via="shadow").
 
+Entries are birth-anchored: the v3 gate reads the FIRST 11 prints of a
+mint's life, so a tape only starts for mints whose `create` event we
+saw, once per mint. Without this, a first-seen print deep in a mint's
+life makes an arbitrary mid-life window look like "early" (postmortem
+2026-10-17: 21/23 live entries fired 3-3522 prints late and bought
+micro-burst tops; stops in 9-275 s).
+
 No real orders in any configuration: place_order is always called with
 shadow=True, and LIVE_TRADING is never consulted. The funded wallet only
 pays nothing; the key signs locally for parity measurement.
@@ -49,6 +56,8 @@ ENTRY_N = 11  # need entry_lookback+1 buys before the gate can run
 PRUNE_S = 60.0
 IDLE_DROP_S = 1800.0
 MAX_MINTS = 5000
+CREATES_TTL_S = 3600.0  # birth anchors: only useful until first prints
+TAPED_CAP = 1_000_000   # one-shot registry soft cap (clear + warn)
 WALLET = str(REPO / "data" / "shadow_wallet.json")
 LEDGER = str(REPO / "data" / "shadow_decisions.jsonl")
 
@@ -113,6 +122,20 @@ def mark_suspect(mark: float, size: float) -> bool:
     return r > MARK_HI or r < MARK_LO
 
 
+def tape_should_start(m: str, creates: dict, taped: set) -> bool:
+    """True only for a mint whose birth we saw and have never taped.
+
+    The v3 entry gate reads the FIRST 11 prints of a mint's life. That
+    window only exists if the mint's `create` event arrived while we
+    were connected — otherwise the "early" window is an arbitrary
+    mid-life slice (postmortem 2026-10-17: 21 of 23 live shadow entries
+    fired 3-3522 prints late and bought micro-burst tops; stop-outs in
+    9-275 s; the missed birth window of one mint ran +3966%). One tape
+    per mint, ever.
+    """
+    return m in creates and m not in taped
+
+
 def new_tape(mint: str, ts: int):
     return {"mint": mint, "t0": ts, "prices": [], "acts": [],
             "liq": [], "buyers": [], "sells": 0, "last_ts": ts,
@@ -165,8 +188,11 @@ def main() -> None:
     log.info("shadow active taker=%s size=%s", taker[:8], SIZE_SOL)
     mints: dict[str, dict] = {}
     poss: dict[str, dict] = {}
+    creates: dict[str, int] = {}
+    taped: set[str] = set()
     t_end = time.time() + a.secs if a.secs > 0 else float("inf")
     last_prune = time.time()
+    last_full_warn = 0.0
 
     def close_position(mint: str, why: str, mark: float) -> None:
         if why == "rug":
@@ -175,6 +201,7 @@ def main() -> None:
             # would book fantasy profit (seen live: +491x on a corpse).
             mark = 0.0
         p = poss.pop(mint)
+        mints.pop(mint, None)  # window is over: tape is moot after close
         pnl = mark - p["size"]
         halted = w.apply_close(mint, pnl)
         ledger_append(LEDGER, ledger_row(
@@ -197,7 +224,7 @@ def main() -> None:
                  mint[:8], why, pnl, w.s.balance, halted)
 
     async def run():
-        nonlocal last_prune
+        nonlocal last_prune, last_full_warn
         async with websockets.connect(URL, max_size=50_000_000) as ws:
             log.info("shadow stream connected")
             while time.time() < t_end:
@@ -211,6 +238,13 @@ def main() -> None:
                     continue
                 act = e.get("action")
                 m = e.get("mint")
+                if act == "create" and m:
+                    # birth anchor (see tape_should_start): timestamps only
+                    if is_pump_pool({"pool": e.get("pool"),
+                                     "protocol": e.get("protocol")}):
+                        creates[m] = int(e.get("timestamp")
+                                         or int(time.time() * 1000))
+                    continue
                 if act not in ("buy", "sell") or not m:
                     continue
                 if not is_pump_pool({"pool": e.get("pool"),
@@ -223,8 +257,16 @@ def main() -> None:
                 ts = int(e.get("timestamp") or int(time.time() * 1000))
                 t = mints.get(m)
                 if t is None:
-                    if len(mints) >= MAX_MINTS:
+                    if not tape_should_start(m, creates, taped):
                         continue
+                    if len(mints) >= MAX_MINTS:
+                        if time.time() - last_full_warn > 300.0:
+                            last_full_warn = time.time()
+                            log.warning(
+                                "tape table at cap (%d) — birth anchor "
+                                "at risk", len(mints))
+                        continue
+                    taped.add(m)
                     t = mints[m] = new_tape(m, ts)
                 t["last_ts"] = ts
                 # aligned per-print series (buys AND sells), mirroring
@@ -380,12 +422,29 @@ def main() -> None:
                         jup="🕶️ SHADOW BUY (signed-never-sent)")
                     log.info("SHADOW BUY %s epx=%s vpx=%.3g dec=%s qty_base=%s",
                              m, t["prices"][ENTRY_N - 1], vpx, dec, qty_base)
+                # one-shot window: a completed tape is moot unless a
+                # position still needs it for marks (kept until close).
+                if t["done"] and m not in poss:
+                    mints.pop(m, None)
                 now = time.time()
                 if now - last_prune > PRUNE_S:
                     cutoff = now * 1000 - IDLE_DROP_S * 1000
                     for mk in [k for k, v in mints.items()
                                if k not in poss and v["last_ts"] < cutoff]:
                         del mints[mk]
+                    # completed non-position tapes are moot (one-shot);
+                    # drop them promptly so the table cannot saturate
+                    for mk in [k for k, v in mints.items()
+                               if k not in poss and v.get("done")]:
+                        del mints[mk]
+                    for mk in [k for k, v in creates.items()
+                               if now * 1000 - v
+                               > CREATES_TTL_S * 1000]:
+                        del creates[mk]
+                    if len(taped) > TAPED_CAP:
+                        log.warning("taped registry at %d — clearing",
+                                    len(taped))
+                        taped.clear()
                     last_prune = now
                     # flow-independent exits: dead mints get no prints, so
                     # TIME/STALE must fire here or positions sit forever.

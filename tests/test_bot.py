@@ -944,6 +944,23 @@ def test_shadow_quote_fill_helpers():
     assert quote_failure_kind("mystery") == "other"
 
 
+def test_shadow_tape_birth_anchor():
+    # 2026-10-17 postmortem: the early 11-print window is only valid when
+    # the mint's create event was seen — a mint first observed mid-life
+    # (predates the run, or prints skipped while the table was full)
+    # must never gate: "early" would be an arbitrary mid-life slice
+    # (21/23 live entries fired 3-3522 prints late; stops in 9-275 s).
+    # One tape per mint, ever: completed/pruned windows never re-open.
+    from bot.shadow_loop import tape_should_start
+    creates = {"A": 1}
+    taped = set()
+    assert tape_should_start("A", creates, taped)      # birth seen → ok
+    assert not tape_should_start("B", creates, taped)  # no create → skip
+    taped.add("A")
+    assert not tape_should_start("A", creates, taped)  # one-shot
+    assert not tape_should_start("A", creates, {"A"})  # pruned ≠ unlocked
+
+
 def test_order_quote_ex_reasons():
     import os
     from unittest.mock import patch
