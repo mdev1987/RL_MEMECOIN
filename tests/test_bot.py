@@ -855,6 +855,27 @@ def test_shadow_tape_bounded():
         and len(t["liq"]) == 11 and t["buyers"] == ["S1"] and t["sells"] == 0
 
 
+def test_shadow_report_parse():
+    # scripted, reproducible shadow evidence: closes tallied by reason from
+    # the log the run itself wrote (no state files needed).
+    from eval.shadow_report import parse, report
+    text = "\n".join([
+        "2026-10-17 09:00:00,000 INFO SHADOW BUY MintA epx=1e-07 vpx=1.1e-07 dec=6 qty_base=100",
+        "2026-10-17 09:01:00,000 INFO SHADOW entry ghost MintB tape_px=1 venue_px=9 (skipped)",
+        "2026-10-17 09:01:10,000 INFO SHADOW entry no-quote MintC: order HTTP 400: no routes",
+        "2026-10-17 09:02:00,000 INFO SHADOW exit no-quote MintA: no executable tx: x",
+        "2026-10-17 09:03:00,000 INFO SHADOW SELL MintA take pnl=+0.00600 bal=1.0060 halted=False",
+        "2026-10-17 09:04:00,000 INFO SHADOW SELL MintA stop pnl=-0.00120 bal=1.0048 halted=False",
+        "2026-10-17 09:05:00,000 INFO shadow done bal=1.0048 W=1 L=1 crashed=no",
+    ])
+    p = parse(text)
+    assert p["buys"] == 1 and p["wins"] == 1 and p["losses"] == 1
+    assert p["closes"]["take"]["n"] == 1 and p["closes"]["stop"]["n"] == 1
+    assert abs(p["pnl"] - 0.0048) < 1e-9 and p["done"] and p["ghost"] == 1
+    assert p["final"]["crashed"] == "no"
+    assert "take: n=1" in report(text) and "final: bal=1.0048" in report(text)
+
+
 def test_exit_retry_never_throttled():
     # run75 regression: an exit whose 2500bps route had no executable tx
     # was retried immediately at 5000bps, but the retry hit our own
