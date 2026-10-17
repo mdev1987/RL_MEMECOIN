@@ -94,5 +94,23 @@ failures; all are now fixed and covered by tests (56 total):
   `JUPITER_API_KEY_REPLAY` when set, keeping the primary key's rate budget
   for the live-stream shadow and real-money paths.
 
+### run75 findings (same day) — two more, fixed
+
+- **Exit starvation by our own throttle.** An exit whose 2500bps route had
+  no executable tx retried at 5000bps milliseconds later, hit our own 0.5s
+  politeness gap, and the caller read "throttled" (backoff 2s, no miss):
+  147 logged in 63 minutes, zero closes, two positions wedged the whole run.
+  Exits now bypass the politeness throttle (`get_order(critical=True)` for
+  sells); the per-position cooldowns (2s/60s + miss counting + rug-give-up)
+  bound the rate instead. Test: `test_exit_retry_never_throttled`.
+- **Unbounded tape memory.** Tapes were marked `done` only when the entry
+  gate could run; with `MAXOPEN` full for an hour no tape ever finished and
+  print arrays grew without bound — the run process died at 06:52 with no
+  traceback (OOM). Tapes now close after the 11-print window (`push_print`),
+  and the entry gate fires exactly on the window-completing print, so a
+  slot freeing up never buys a stale setup. Test: `test_shadow_tape_bounded`.
+- Entry `NoQuote` skips are logged (were silent); a crash now logs a
+  traceback and a final balance summary line. 60 tests total.
+
 Safety defaults unchanged: shadow never executes; live requires
 `LIVE_TRADING=1 LIVE_CONFIRM=YES`; `data/LIVE_KILL` stops everything.

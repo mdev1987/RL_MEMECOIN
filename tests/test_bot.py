@@ -832,6 +832,72 @@ def test_live_order_throttle():
                 raise SystemExit("second call must throttle")
             except live.NoQuote as e:
                 assert "throttled" in str(e)
+            # critical calls (exits) bypass the throttle entirely: our own
+            # politeness must never starve a risk-critical sell.
+            live.get_order("A", "B", 100, "T", critical=True)
+            live.get_order("A", "B", 100, "T", critical=True)
+    live._last_order_ts = 0.0
+
+
+def test_shadow_tape_bounded():
+    # Live regression: tapes only marked done inside the entry gate meant
+    # that with MAXOPEN positions stuck open, arrays grew unbounded until
+    # the process was OOM-killed (run75 died mid-run).
+    from bot.shadow_loop import new_tape, push_print
+    t = new_tape("M", 0)
+    gates = [push_print(t, 1.0 + i, "buy", 10.0 + i, signer="S1")
+             for i in range(11)]
+    assert gates[-1] is True and not any(gates[:-1])
+    assert t["done"] and len(t["prices"]) == 11
+    # prints after the window never grow the tape
+    assert push_print(t, 9.9, "sell", 99.0, signer="S2") is False
+    assert len(t["prices"]) == 11 and len(t["acts"]) == 11 \
+        and len(t["liq"]) == 11 and t["buyers"] == ["S1"] and t["sells"] == 0
+
+
+def test_exit_retry_never_throttled():
+    # run75 regression: an exit whose 2500bps route had no executable tx
+    # was retried immediately at 5000bps, but the retry hit our own
+    # politeness throttle; the caller saw "throttled", backed off, and
+    # retried forever (147 logged, 0 closes in 63 min).
+    import os
+    from unittest.mock import patch
+    from bot import live
+    live._last_order_ts = 0.0
+
+    class _KP:
+        def pubkey(self):
+            return "TAKER"
+
+        def sign_message(self, msg):
+            class _S:
+                def verify(self, p, m):
+                    return True
+            return _S()
+
+    class _R:
+        def __init__(self, body):
+            self.ok = True
+            self._body = body
+
+        def json(self):
+            return self._body
+
+    no_tx = _live_order()
+    del no_tx["transaction"]
+    env = {"JUPITER_API_KEY": "x", "JUP_MIN_INTERVAL_S": "60",
+           "LIVE_MAX_SOL": "1.0", "LIVE_EXIT_SLIPPAGE_BPS": "2500",
+           "LIVE_WIDE_RETRY_BPS": "5000"}
+    with patch.dict(os.environ, env):
+        with patch("bot.live.killed", return_value=False), \
+             patch("bot.live._load_keypair", return_value=_KP()), \
+             patch("bot.live.sign_order", return_value="c2ln"), \
+             patch("bot.live.requests.get",
+                   side_effect=[_R(no_tx), _R(_live_order())]) as rg:
+            rc = live.place_order("A", live.SOL, 100, 0.01, shadow=True)
+            assert rc.shadow and rg.call_count == 2
+            assert rg.call_args_list[0][1]["params"]["slippageBps"] == "2500"
+            assert rg.call_args_list[1][1]["params"]["slippageBps"] == "5000"
     live._last_order_ts = 0.0
 
 

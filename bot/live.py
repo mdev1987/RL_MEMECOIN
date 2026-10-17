@@ -139,13 +139,18 @@ def _api_key() -> str:
 def get_order(input_mint: str, output_mint: str, amount_base: int,
               taker: str, slippage_bps: int | str = 100,
               jito_tip_lamports: int = 0,
-              timeout: float = 20.0) -> dict:
+              timeout: float = 20.0, critical: bool = False) -> dict:
     """Read-only /order WITH taker (returns transaction + requestId).
 
     slippage_bps="auto" omits the param for RTSE-automatic; a number
     overrides with a fixed value (better for memecoin exits).
     jito_tip_lamports>0 passes a Jito tip (default 0 = off: tips are
     proven edge-killers at small size).
+    critical=True skips the politeness throttle: exits must never be
+    starved by our own rate limiter (seen live: an exit retry issued
+    milliseconds after the first call was throttled and the caller then
+    backed off forever). Callers bound critical traffic with per-position
+    cooldowns instead.
     """
     params = {"inputMint": input_mint, "outputMint": output_mint,
               "amount": str(int(amount_base)), "taker": taker}
@@ -153,7 +158,7 @@ def get_order(input_mint: str, output_mint: str, amount_base: int,
         params["slippageBps"] = str(int(slippage_bps))
     if int(jito_tip_lamports or 0) > 0:
         params["jitoTipLamports"] = str(int(jito_tip_lamports))
-    if order_throttled():
+    if not critical and order_throttled():
         raise NoQuote("throttled: min /order interval")
     r = requests.get(
         f"{BASE}/order", params=params,
@@ -265,6 +270,8 @@ def place_order(input_mint: str, output_mint: str, amount_base: int,
     Exits (output SOL) default to LIVE_EXIT_SLIPPAGE_BPS=2500 and a
     relaxed impact cap; a "route without tx" retries once for exits at
     LIVE_WIDE_RETRY_BPS then raises NoQuote (routine venue miss).
+    Exit orders bypass the /order politeness throttle (critical): a
+    risk-critical sell must never be starved by our own rate limiter.
     """
     if killed():
         raise RuntimeError("LIVE_KILL present — refusing")
@@ -282,7 +289,8 @@ def place_order(input_mint: str, output_mint: str, amount_base: int,
         slippage = os.environ.get("LIVE_SLIPPAGE_BPS", "100")
     slippage = "auto" if slippage == "auto" else int(slippage)
     tip = int(os.environ.get("LIVE_JITO_TIP_LAMPORTS", "0") or 0)
-    o = get_order(input_mint, output_mint, amount_base, taker, slippage, tip)
+    o = get_order(input_mint, output_mint, amount_base, taker, slippage, tip,
+                  critical=is_exit)
     ok, why = check_guards(o, taker, max_sol, is_exit=is_exit)
     if not ok and why.startswith("no transaction"):
         # Venue returned a route but no executable tx (usually the
@@ -293,8 +301,10 @@ def place_order(input_mint: str, output_mint: str, amount_base: int,
         cur = 0 if isinstance(slippage, str) else int(slippage)
         wide = int(os.environ.get("LIVE_WIDE_RETRY_BPS", "5000"))
         if is_exit and cur < wide:
+            # critical: the retry follows the first call by milliseconds;
+            # our own throttle must never turn it into "throttled".
             o = get_order(input_mint, output_mint, amount_base, taker,
-                          wide, tip)
+                          wide, tip, critical=True)
             ok, why = check_guards(o, taker, max_sol, is_exit=is_exit)
         if not ok and why.startswith("no transaction"):
             raise NoQuote(f"no executable tx: {why}")

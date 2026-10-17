@@ -88,6 +88,32 @@ def new_tape(mint: str, ts: int):
             "done": False}
 
 
+def push_print(t: dict, px: float, act: str, liq: float,
+               signer: str | None = None, entry_n: int = ENTRY_N) -> bool:
+    """Append one print to a fresh tape; True exactly once, on the print
+    that completes the entry window (the gate event).
+
+    After the window the tape is done and stops growing. Seen live: with
+    positions open at MAXOPEN for an hour, tapes never reached "done"
+    and their print arrays grew without bound until the process was
+    OOM-killed mid-run.
+    """
+    if t["done"]:
+        return False
+    t["prices"].append(px)
+    t["acts"].append(act)
+    t["liq"].append(liq)
+    if act == "buy":
+        if signer and signer not in t["buyers"]:
+            t["buyers"].append(signer)
+    else:
+        t["sells"] += 1
+    if len(t["prices"]) >= entry_n:
+        t["done"] = True
+        return True
+    return False
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--secs", type=float, default=0.0,
@@ -170,21 +196,13 @@ def main() -> None:
                         continue
                     t = mints[m] = new_tape(m, ts)
                 t["last_ts"] = ts
-                if t["done"]:
-                    pass  # still update marks below via poss
-                else:
-                    # aligned per-print series (buys AND sells), mirroring
-                    # replay slot aggregation: one mark per print.
-                    t["prices"].append(px)
-                    t["acts"].append(act)
-                    liq = e.get("quoteInPool")
-                    t["liq"].append(float(liq) if liq else 0.0)
-                    if act == "buy":
-                        s = e.get("txSigner")
-                        if s and s not in t["buyers"]:
-                            t["buyers"].append(s)
-                    else:
-                        t["sells"] += 1
+                # aligned per-print series (buys AND sells), mirroring
+                # replay slot aggregation: one mark per print. Bounded:
+                # the tape stops growing once the entry window closes.
+                gate_event = push_print(
+                    t, px, act,
+                    float(e["quoteInPool"]) if e.get("quoteInPool") else 0.0,
+                    signer=e.get("txSigner"))
                 # live mark for open paper positions (last-print marks)
                 if m in poss and t["prices"]:
                     p = poss[m]
@@ -254,11 +272,11 @@ def main() -> None:
                                     m[:8], exc)
                         continue
                     close_position(m, why, mark)
-                # entry gate on fresh tapes only
-                if (not t["done"] and m not in poss and not w.s.halted
-                        and len(poss) < MAXOPEN
-                        and len(t["prices"]) >= ENTRY_N):
-                    t["done"] = True
+                # entry gate on the window-completing print only: a signal
+                # is acted on at its moment, never as a stale setup after
+                # a slot frees up.
+                if (gate_event and m not in poss and not w.s.halted
+                        and len(poss) < MAXOPEN):
                     take, _ = S.decide_entry(
                         t["prices"][:ENTRY_N], t["acts"][:ENTRY_N],
                         t["liq"][:ENTRY_N])
@@ -289,7 +307,10 @@ def main() -> None:
                         rc = L.place_order(
                             SOL, m, int(round(SIZE_SOL * LAMPORTS)),
                             SIZE_SOL, shadow=True)
-                    except L.NoQuote:
+                    except L.NoQuote as exc:
+                        # counted skip (routine for fresh mints), never an
+                        # error alert
+                        log.info("SHADOW entry no-quote %s: %s", m[:8], exc)
                         continue
                     except Exception as exc:
                         log.warning("SHADOW entry sign failed %s: %s",
@@ -374,9 +395,14 @@ def main() -> None:
                             continue
                         close_position(mk, why, mark)
 
-    asyncio.run(run())
-    log.info("shadow done bal=%.4f W=%d L=%d",
-             w.s.balance, w.s.wins, w.s.losses)
+    crashed = None
+    try:
+        asyncio.run(run())
+    except Exception as exc:
+        crashed = exc
+        log.exception("shadow loop crashed")
+    log.info("shadow done bal=%.4f W=%d L=%d crashed=%s",
+             w.s.balance, w.s.wins, w.s.losses, crashed or "no")
 
 
 if __name__ == "__main__":
