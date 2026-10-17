@@ -164,6 +164,16 @@ before any real money moved:
 - Live exit PnL/ledger now uses the executed `totalOutputAmount` (real
   proceeds), falling back to the tape mark only in SHADOW parity runs.
 
+### shadow run77 (same day, quote-fill exits) — first clean live round trips
+
+75 min on the live pump.fun stream: 5 buys / 5 legitimate closes
+(3 stop, 2 time), 0 rugs, 0 exit no-quotes, no fantasy marks, bounded
+memory (80MB RSS vs run75's unbounded growth), clean final line. Net
+-0.00319 SOL on 0.05 SOL deployed — a thin sample, mostly stop-losses;
+the fresh replay OOS gate remains the profitability measure. The entry
+filter vetoed 15 ghost tapes and 5 impact-guard candidates (fail-closed).
+Evidence: `eval/shadow_run77_report.txt`.
+
 69 tests total.
 
 Safety defaults unchanged: shadow never executes; live requires
