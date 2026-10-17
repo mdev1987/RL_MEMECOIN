@@ -122,6 +122,21 @@ def mark_suspect(mark: float, size: float) -> bool:
     return r > MARK_HI or r < MARK_LO
 
 
+def tradable_event(e: dict) -> bool:
+    """True only for SOL-quoted pump events (the validated universe).
+
+    replay/OOS paths (`load_paths`) only ever contain quoteMint==SOL
+    pairs. Pump now also launches pairs quoted in USDC or other meme
+    tokens: their tape prices are in quote-asset units, the v3 liq
+    filter is SOL-denominated, and the SOL venue route cannot act on
+    them anyway. Seen live (run81): 8 of 11 birth-window gate passes
+    were such pairs, all ghost-skipped at the venue cross-check.
+    """
+    return (e.get("quoteMint") == SOL
+            and is_pump_pool({"pool": e.get("pool"),
+                              "protocol": e.get("protocol")}))
+
+
 def tape_should_start(m: str, creates: dict, taped: set) -> bool:
     """True only for a mint whose birth we saw and have never taped.
 
@@ -240,15 +255,13 @@ def main() -> None:
                 m = e.get("mint")
                 if act == "create" and m:
                     # birth anchor (see tape_should_start): timestamps only
-                    if is_pump_pool({"pool": e.get("pool"),
-                                     "protocol": e.get("protocol")}):
+                    if tradable_event(e):
                         creates[m] = int(e.get("timestamp")
                                          or int(time.time() * 1000))
                     continue
                 if act not in ("buy", "sell") or not m:
                     continue
-                if not is_pump_pool({"pool": e.get("pool"),
-                                     "protocol": e.get("protocol")}):
+                if not tradable_event(e):
                     continue
                 px = e.get("price")
                 if not px or float(px) <= 0:
@@ -373,11 +386,16 @@ def main() -> None:
                     pq = order_quote(SOL, m,
                                      int(round(SIZE_SOL * LAMPORTS)))
                     if not pq or not pq.get("outAmount"):
+                        log.info("SHADOW entry preflight no-quote %s", m[:8])
                         continue  # unquotable now: same as NoQuote below
                     try:
                         vpx = SIZE_SOL / (int(pq["outAmount"]) / (10 ** dec))
                     except Exception:
                         continue
+                    log.info("SHADOW gate %s vpx=%.3g tape_px=%.3g "
+                             "impact=%s route=%s", m[:8], vpx,
+                             t["prices"][ENTRY_N - 1], pq.get("priceImpact"),
+                             pq.get("route"))
                     if price_diverges(t["prices"][ENTRY_N - 1], vpx):
                         log.warning(
                             "SHADOW entry ghost %s tape_px=%s venue_px=%s "

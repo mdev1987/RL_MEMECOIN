@@ -961,6 +961,23 @@ def test_shadow_tape_birth_anchor():
     assert not tape_should_start("A", creates, {"A"})  # pruned ≠ unlocked
 
 
+def test_shadow_sol_quote_filter():
+    # 2026-10-17 run81 postmortem: pump now also launches pairs quoted in
+    # USDC / other meme tokens. Their tape prices are in quote-asset
+    # units, the v3 liq filter is SOL-denominated and the venue route is
+    # SOL: 8 of 11 birth-window gate passes in run81 were such pairs,
+    # all ghost-skipped. Replay/OOS (load_paths) only ever admitted
+    # quoteMint==SOL pairs; live must match.
+    from bot.shadow_loop import tradable_event
+    SOL = "So11111111111111111111111111111111111111112"
+    assert tradable_event({"quoteMint": SOL, "pool": "pump"})
+    assert tradable_event({"quoteMint": SOL, "pool": "pump-amm"})
+    assert tradable_event({"quoteMint": SOL, "protocol": "PUMPSWAP"})
+    assert not tradable_event({"quoteMint": "EPjFWdd", "pool": "pump"})
+    assert not tradable_event({"quoteMint": SOL, "pool": "raydium"})
+    assert not tradable_event({"pool": "pump"})  # quoteMint missing
+
+
 def test_order_quote_ex_reasons():
     import os
     from unittest.mock import patch

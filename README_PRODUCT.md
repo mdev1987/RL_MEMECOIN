@@ -251,9 +251,31 @@ where in range):
 - This reframes the earlier live samples: their P&L (−6.2 %/trade over
   17 closes) measured a mis-anchored variant, not the v3 early window.
   `data/shadow_run80_curve.tsv` holds the partial run80 baseline; the
-  fresh 24 h birth-anchored shadow (run81) is the realtime verdict now.
+  fresh 24 h birth-anchored shadow (run82, after the quote-asset filter
+  below) is the realtime verdict now.
 
-72 tests total.
+### quote-asset filter (run81 follow-up, same day)
+
+run81 opened with 22 gate-passes and 0 trades in 45 min. Forensics on
+the hour-14 public tape: pump now also launches pairs quoted in **USDC
+or other meme tokens**, and live taped them all. Their tape prices are
+in quote-asset units (BATMAN/USDC `4Ud6oKbe`: tape 4.7e-6 vs venue
+4.6e-8 SOL ≈ SOL at 103 USD — self-consistent), the v3 liq filter is
+SOL-denominated, and the SOL venue route cannot act on them. 8 of the
+11 checked gate passes were such pairs — correctly ghost-skipped, but
+they crowded out the real ones. Replay/OOS only ever admitted
+quoteMint==SOL (`load_paths`); live now matches via `tradable_event`
+(creates + prints). Test: `test_shadow_sol_quote_filter`.
+
+The remaining 3 SOL-quoted gates were all blocked by the entry impact
+cap (−6..−100 % quoted: Jupiter's first-seconds quote for a new pool is
+its least reliable moment) — two of them then ran +365 % / +120 % after
+the gate. The shadow run therefore enters with
+`LIVE_MAX_IMPACT_PCT=100` and fills at the quoted price, logging every
+gate (`SHADOW gate … vpx/impact/route`) so the realtime P&L stays
+quote-honest and auditable; live/dust keep the 5 % default.
+
+73 tests total.
 
 Safety defaults unchanged: shadow never executes; live requires
 `LIVE_TRADING=1 LIVE_CONFIRM=YES`; `data/LIVE_KILL` stops everything.
