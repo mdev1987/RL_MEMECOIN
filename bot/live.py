@@ -132,8 +132,65 @@ def _load_keypair():
     return Keypair.from_bytes(n.to_bytes(64, "big"))
 
 
+def _api_keys() -> list[str]:
+    """Candidate Jupiter keys in preference order (primary first).
+
+    JUPITER_API_KEY_REPLAY is a fallback for the primary slot: a revoked
+    or rotated primary key must degrade to the backup, never stall the
+    live paths (seen 2026-10-17: primary key 401 mid-session).
+    """
+    out: list[str] = []
+    for name in ("JUPITER_API_KEY", "JUPITER_API_KEY_REPLAY"):
+        k = (os.environ.get(name) or "").strip()
+        if k and k not in out:
+            out.append(k)
+    return out
+
+
 def _api_key() -> str:
-    return os.environ.get("JUPITER_API_KEY", "")
+    keys = _api_keys()
+    return keys[0] if keys else ""
+
+
+VENUE_MISS_MARKERS = ("no executable tx", "order no quote")
+VENUE_MISS_400_MARKERS = ("failed to get quotes", "no routes", "no route")
+
+
+def venue_miss(exc: BaseException) -> bool:
+    """True when the venue (not our side) could not quote/build the trade.
+
+    Only venue misses count toward rug-give-up: a 401/429/5xx or a
+    network blip is OUR problem and must never book a position as
+    worthless (a dead API key would otherwise rug-close a live book in
+    minutes of blind misses).
+    """
+    s = str(exc)
+    low = s.lower()
+    if "throttled" in low:
+        return False
+    if any(x in low for x in VENUE_MISS_MARKERS):
+        return True
+    if "order http 400" in low and any(x in low
+                                       for x in VENUE_MISS_400_MARKERS):
+        return True
+    return False
+
+
+def venue_auth_error(exc: BaseException) -> bool:
+    s = str(exc)
+    return "order HTTP 401" in s or "order HTTP 403" in s
+
+
+_auth_alerted = False
+
+
+def once_auth_alert() -> bool:
+    """True the first time — callers alert once per process on key death."""
+    global _auth_alerted
+    if _auth_alerted:
+        return False
+    _auth_alerted = True
+    return True
 
 
 def get_order(input_mint: str, output_mint: str, amount_base: int,
@@ -160,9 +217,16 @@ def get_order(input_mint: str, output_mint: str, amount_base: int,
         params["jitoTipLamports"] = str(int(jito_tip_lamports))
     if not critical and order_throttled():
         raise NoQuote("throttled: min /order interval")
-    r = requests.get(
-        f"{BASE}/order", params=params,
-        headers={"x-api-key": _api_key()}, timeout=timeout)
+    keys = _api_keys()
+    r = None
+    for i, k in enumerate(keys or [""]):
+        r = requests.get(
+            f"{BASE}/order", params=params,
+            headers={"x-api-key": k} if k else {}, timeout=timeout)
+        if getattr(r, "status_code", 200) == 401 and i + 1 < len(keys):
+            log.warning("jup /order 401 on key %d — trying fallback key", i)
+            continue
+        break
     if not r.ok:
         # 400 "No routes found" is routine for fresh illiquid mints.
         raise NoQuote(f"order HTTP {r.status_code}: {r.text[:200]}")

@@ -44,28 +44,39 @@ def token_decimals(mint: str, helius_key: str, timeout: float = 8.0) -> int | No
         return None
 
 
-def _api_key(replay: bool = False) -> str:
-    """Replay workloads may use a dedicated key (rate-limit isolation):
-    JUPITER_API_KEY_REPLAY when set, else the primary JUPITER_API_KEY."""
-    if replay:
-        k = os.environ.get("JUPITER_API_KEY_REPLAY")
-        if k:
-            return k
-    return os.environ.get("JUPITER_API_KEY", "")
+def _api_keys(replay: bool = False) -> list[str]:
+    """Candidate keys in preference order. Replay workloads prefer
+    JUPITER_API_KEY_REPLAY (rate-limit isolation); everything else the
+    primary first. The other slot is a 401 fallback — a rotated primary
+    must not stall live quoting (seen 2026-10-17)."""
+    order = (("JUPITER_API_KEY_REPLAY", "JUPITER_API_KEY") if replay
+             else ("JUPITER_API_KEY", "JUPITER_API_KEY_REPLAY"))
+    out: list[str] = []
+    for name in order:
+        k = (os.environ.get(name) or "").strip()
+        if k and k not in out:
+            out.append(k)
+    return out
 
 
 def order_quote(input_mint: str, output_mint: str, amount_base: int,
                 timeout: float = 10.0, replay: bool = False) -> dict | None:
     """GET /swap/v2/order (read-only). Returns quote dict or None."""
-    api_key = _api_key(replay)
-    if not api_key or amount_base <= 0:
+    keys = _api_keys(replay)
+    if not keys or amount_base <= 0:
         return None
     try:
-        o = requests.get(
-            f"{BASE}/order",
-            params={"inputMint": input_mint, "outputMint": output_mint,
-                    "amount": str(int(amount_base)), "slippageBps": "50"},
-            headers={"x-api-key": api_key}, timeout=timeout)
+        o = None
+        for i, k in enumerate(keys):
+            o = requests.get(
+                f"{BASE}/order",
+                params={"inputMint": input_mint, "outputMint": output_mint,
+                        "amount": str(int(amount_base)), "slippageBps": "50"},
+                headers={"x-api-key": k}, timeout=timeout)
+            if getattr(o, "status_code", 200) == 401 and i + 1 < len(keys):
+                log.warning("jup quote 401 on key %d — trying fallback key", i)
+                continue
+            break
         if not o.ok:
             log.debug("jup order HTTP %s: %s", o.status_code, o.text[:120])
             return None

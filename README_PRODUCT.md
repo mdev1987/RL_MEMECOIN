@@ -110,7 +110,15 @@ failures; all are now fixed and covered by tests (56 total):
   and the entry gate fires exactly on the window-completing print, so a
   slot freeing up never buys a stale setup. Test: `test_shadow_tape_bounded`.
 - Entry `NoQuote` skips are logged (were silent); a crash now logs a
-  traceback and a final balance summary line. 60 tests total.
+  traceback and a final balance summary line.
+- **Key death is not a rug.** A 401/403/429/5xx or network error never
+  counts toward rug-give-up (only venue-level "no route / no executable
+  tx" does), so a dead API key can never blind-rug-close the book. A
+  dead primary key degrades to `JUPITER_API_KEY_REPLAY` on 401 with a
+  one-time Telegram alert (2026-10-17: the primary key was revoked
+  mid-session; before this, exits would have missed-into-rug-close).
+  Tests: `test_venue_miss_classification`, `test_get_order_key_failover`,
+  `test_jup_quote_key_failover`. 64 tests total.
 
 Safety defaults unchanged: shadow never executes; live requires
 `LIVE_TRADING=1 LIVE_CONFIRM=YES`; `data/LIVE_KILL` stops everything.

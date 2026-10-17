@@ -210,6 +210,18 @@ def main(require_live_flag: bool = True) -> None:
                     save_positions(poss)
                     log.info("LIVE skip no-quote %s: %s", mint[:8], exc)
                     continue
+                if not L.venue_miss(exc):
+                    # auth/quota/network: OUR side — back off, but never
+                    # count toward rug-give-up
+                    poss[mint]["cool_until"] = time.time() + 60.0
+                    save_positions(poss)
+                    log.info("LIVE skip no-quote (not venue) %s: %s",
+                             mint[:8], exc)
+                    if L.venue_auth_error(exc) and L.once_auth_alert():
+                        ntf.send_alert("🔑 Jupiter order auth failing",
+                                       f"live exits degraded: "
+                                       f"{str(exc)[:120]}")
+                    continue
                 skip["live:no-quote"] += 1
                 poss[mint]["cool_until"] = time.time() + 60.0
                 misses = poss[mint].get("misses", 0) + 1
@@ -305,6 +317,10 @@ def main(require_live_flag: bool = True) -> None:
                 except L.NoQuote as exc:
                     skip["live:no-quote"] += 1
                     log.info("LIVE skip no-quote %s: %s", mint[:8], exc)
+                    if L.venue_auth_error(exc) and L.once_auth_alert():
+                        ntf.send_alert("🔑 Jupiter order auth failing",
+                                       f"live entries degraded: "
+                                       f"{str(exc)[:120]}")
                 except Exception as exc:
                     log.error("LIVE BUY FAILED %s: %s", mint[:8], exc)
                     ntf.send_alert("🔴 LIVE BUY FAILED", f"{mint[:8]}: {exc}")

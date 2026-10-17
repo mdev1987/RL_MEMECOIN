@@ -839,6 +839,92 @@ def test_live_order_throttle():
     live._last_order_ts = 0.0
 
 
+def test_venue_miss_classification():
+    # Rug-give-up must fire only for venue-level misses. A dead API key or
+    # a rate limit is OUR problem and must never book a position as
+    # worthless (2026-10-17: the primary key 401'd mid-session).
+    from bot import live
+    assert live.venue_miss(live.NoQuote("no executable tx: no txn"))
+    assert live.venue_miss(live.NoQuote(
+        'order HTTP 400: {"requestId":"x","error":"Failed to get quotes"}'))
+    assert live.venue_miss(live.NoQuote("order no quote: {}"))
+    assert not live.venue_miss(live.NoQuote(
+        'order HTTP 401: {"code":401,"message":"Unauthorized"}'))
+    assert not live.venue_miss(live.NoQuote('order HTTP 429: too many'))
+    assert not live.venue_miss(live.NoQuote("order HTTP 500: oops"))
+    assert not live.venue_miss(live.NoQuote("throttled: min /order interval"))
+    assert live.venue_auth_error(live.NoQuote("order HTTP 401: x"))
+    assert not live.venue_auth_error(live.NoQuote("order HTTP 429: x"))
+
+
+def test_get_order_key_failover():
+    # primary revoked mid-session: /order degrades to the backup key
+    # instead of stalling every live path.
+    import os
+    from unittest.mock import patch
+    from bot import live
+    live._last_order_ts = 0.0
+
+    class _R401:
+        status_code = 401
+        ok = False
+        text = '{"code":401,"message":"Unauthorized"}'
+
+    class _R200:
+        status_code = 200
+        ok = True
+
+        def json(self):
+            return _live_order()
+
+    seen = []
+
+    def _get(url, params=None, headers=None, timeout=None):
+        seen.append((headers or {}).get("x-api-key"))
+        return _R401() if (headers or {}).get("x-api-key") == "dead" \
+            else _R200()
+
+    with patch.dict(os.environ, {"JUPITER_API_KEY": "dead",
+                                 "JUPITER_API_KEY_REPLAY": "backup"}):
+        with patch("bot.live.requests.get", side_effect=_get):
+            o = live.get_order("A", "B", 100, "T")
+            assert o["outAmount"] == _live_order()["outAmount"]
+            assert seen == ["dead", "backup"], seen
+    live._last_order_ts = 0.0
+
+
+def test_jup_quote_key_failover():
+    import os
+    from unittest.mock import patch
+    from bot import jup
+
+    class _R401:
+        status_code = 401
+        ok = False
+        text = '{"code":401,"message":"Unauthorized"}'
+
+    class _R200:
+        status_code = 200
+        ok = True
+
+        def json(self):
+            return {"inAmount": "1", "outAmount": "2", "routePlan": []}
+
+    seen = []
+
+    def _get(url, params=None, headers=None, timeout=None):
+        seen.append((headers or {}).get("x-api-key"))
+        return _R401() if (headers or {}).get("x-api-key") == "dead" \
+            else _R200()
+
+    with patch.dict(os.environ, {"JUPITER_API_KEY": "dead",
+                                 "JUPITER_API_KEY_REPLAY": "backup"}):
+        with patch("bot.jup.requests.get", side_effect=_get):
+            q = jup.order_quote("A", "B", 100)
+            assert q and q["outAmount"] == "2"
+            assert seen == ["dead", "backup"], seen
+
+
 def test_shadow_tape_bounded():
     # Live regression: tapes only marked done inside the entry gate meant
     # that with MAXOPEN positions stuck open, arrays grew unbounded until

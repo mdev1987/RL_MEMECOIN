@@ -257,6 +257,16 @@ def main() -> None:
                         if "throttled" in str(exc):
                             p["cool_until"] = time.time() + 2.0
                             continue  # politeness gap, not a venue miss
+                        if not L.venue_miss(exc):
+                            # our side (auth/quota/network): back off, but
+                            # never count toward rug-give-up — a dead key
+                            # must not book the position as worthless
+                            if L.venue_auth_error(exc) and L.once_auth_alert():
+                                ntf.send_alert(
+                                    "🔑 Jupiter order auth failing",
+                                    f"shadow exits degraded: {str(exc)[:120]}")
+                            p["cool_until"] = time.time() + 60.0
+                            continue
                         p["cool_until"] = time.time() + 60.0
                         p["misses"] = p.get("misses", 0) + 1
                         if L.rug_give_up(p["misses"]):
@@ -311,6 +321,10 @@ def main() -> None:
                         # counted skip (routine for fresh mints), never an
                         # error alert
                         log.info("SHADOW entry no-quote %s: %s", m[:8], exc)
+                        if L.venue_auth_error(exc) and L.once_auth_alert():
+                            ntf.send_alert("🔑 Jupiter order auth failing",
+                                           f"shadow entries degraded: "
+                                           f"{str(exc)[:120]}")
                         continue
                     except Exception as exc:
                         log.warning("SHADOW entry sign failed %s: %s",
@@ -381,6 +395,17 @@ def main() -> None:
                                      mk[:8], exc)
                             if "throttled" in str(exc):
                                 continue  # politeness gap, not a miss
+                            if not L.venue_miss(exc):
+                                # our side (auth/quota/network): never a
+                                # rug-close cause
+                                if (L.venue_auth_error(exc)
+                                        and L.once_auth_alert()):
+                                    ntf.send_alert(
+                                        "🔑 Jupiter order auth failing",
+                                        f"sweep exits degraded: "
+                                        f"{str(exc)[:120]}")
+                                p["cool_until"] = time.time() + 60.0
+                                continue
                             p["misses"] = p.get("misses", 0) + 1
                             if L.rug_give_up(p["misses"]):
                                 log.warning(
