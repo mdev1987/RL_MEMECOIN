@@ -1,0 +1,5 @@
+00: scanned=1200001 npaths=533 tr=17 mean=+0.00229 mean_tr=+0.0718 win=0.53
+01: scanned=1200001 npaths=457 tr=15 mean=-0.00003 mean_tr=-0.0009 win=0.47
+02: scanned=1200001 npaths=515 tr=17 mean=-0.00083 mean_tr=-0.0253 win=0.29
+OOS-G1: mean=+0.00050 lb=-0.00083 pass=False -> eval/results_oos_oct17_1200000.json
+rc=0

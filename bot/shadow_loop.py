@@ -29,8 +29,8 @@ load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=True)
 from bot.replay_eval import is_pump_pool
 from bot.wallet import Wallet
 from bot.ledger import append as ledger_append, row as ledger_row
-from bot.jup import (order_quote, price_diverges, token_decimals, SOL,
-                     LAMPORTS)
+from bot.jup import (order_quote, order_quote_ex, price_diverges,
+                     token_decimals, SOL, LAMPORTS)
 from bot import live as L
 from bot import signals as S
 from notifier import get_notifier
@@ -67,6 +67,37 @@ def sweep_due(p: dict, now: float, time_s: float = 3600.0,
 
 MARK_HI = 10.0   # mark/cost above this is suspect without venue agreement
 MARK_LO = 0.1
+
+
+def quote_fill_sol(q: dict | None) -> float | None:
+    """SOL value of a read-only sell quote, or None."""
+    if not q or not q.get("outAmount"):
+        return None
+    try:
+        v = int(q["outAmount"]) / LAMPORTS
+    except Exception:
+        return None
+    return v if v > 0 else None
+
+
+OURS_MARKERS = ("order error", "HTTP 401", "HTTP 403", "HTTP 429",
+                "HTTP 500", "HTTP 502", "HTTP 503", "HTTP 504")
+VENUE_MARKERS = ("HTTP 400", "no quote")
+
+
+def quote_failure_kind(qerr: str) -> str:
+    """'ours' (network/auth/quota) | 'venue' (no route) | 'other'.
+
+    Only 'venue' may count toward rug-give-up: seen live 2026-10-17, the
+    venue build path failed ("Insufficient funds": a shadow wallet never
+    takes delivery) while the mint quoted fine — those are OUR artifacts,
+    never proof the position is worthless.
+    """
+    if any(x in qerr for x in OURS_MARKERS):
+        return "ours"
+    if any(x in qerr for x in VENUE_MARKERS):
+        return "venue"
+    return "other"
 
 
 def mark_suspect(mark: float, size: float) -> bool:
@@ -243,31 +274,33 @@ def main() -> None:
                         continue
                     if time.time() < p.get("cool_until", 0.0):
                         continue  # backing off after a venue miss
-                    try:
-                        rc = L.place_order(
-                            m, SOL, p["qty_base"], p["size"],
-                            shadow=True)
+                    # Shadow exits are quote-fills: the wallet never took
+                    # delivery of the tokens (signed-never-sent), so a sell
+                    # build can only fail with "Insufficient funds" — seen
+                    # live in run76b as two false -100% rugs while the
+                    # mints quoted at 85-105% of cost. Value the exit at
+                    # the venue's read-only quote (the same estimator
+                    # paper uses) and close there. The token-dependent
+                    # build path is exercised in dust with real fills.
+                    q, qerr = order_quote_ex(m, SOL, p["qty_base"])
+                    fill = quote_fill_sol(q)
+                    if fill:
                         p.pop("cool_until", None)
                         p["misses"] = 0
-                        log.info("SHADOW exit quote out=%s",
-                                 rc.out_amount)
-                    except L.NoQuote as exc:
-                        log.info("SHADOW exit no-quote %s: %s",
-                                 m[:8], exc)
-                        if "throttled" in str(exc):
-                            p["cool_until"] = time.time() + 2.0
-                            continue  # politeness gap, not a venue miss
-                        if not L.venue_miss(exc):
-                            # our side (auth/quota/network): back off, but
-                            # never count toward rug-give-up — a dead key
-                            # must not book the position as worthless
-                            if L.venue_auth_error(exc) and L.once_auth_alert():
-                                ntf.send_alert(
-                                    "🔑 Jupiter order auth failing",
-                                    f"shadow exits degraded: {str(exc)[:120]}")
-                            p["cool_until"] = time.time() + 60.0
-                            continue
-                        p["cool_until"] = time.time() + 60.0
+                        log.info("SHADOW exit fill %s out=%.6f SOL",
+                                 m[:8], fill)
+                        close_position(m, why, fill)
+                        continue
+                    kind = quote_failure_kind(qerr)
+                    p["cool_until"] = time.time() + 60.0
+                    log.info("SHADOW exit no-quote %s: %s", m[:8], qerr)
+                    if kind == "ours" and ("HTTP 401" in qerr
+                                           or "HTTP 403" in qerr) \
+                            and L.once_auth_alert():
+                        ntf.send_alert("🔑 Jupiter order auth failing",
+                                       f"shadow exits degraded: "
+                                       f"{qerr[:120]}")
+                    if kind == "venue":
                         p["misses"] = p.get("misses", 0) + 1
                         if L.rug_give_up(p["misses"]):
                             log.warning(
@@ -276,12 +309,7 @@ def main() -> None:
                             close_position(m, "rug", 0.0)  # dead mint:
                             # no venue quotes it, so it is worth zero, not
                             # the last (possibly stale-high) print
-                        continue
-                    except Exception as exc:
-                        log.warning("SHADOW exit sign failed %s: %s",
-                                    m[:8], exc)
-                        continue
-                    close_position(m, why, mark)
+                    continue  # 'ours'/'other': back off, never a rug
                 # entry gate on the window-completing print only: a signal
                 # is acted on at its moment, never as a stale setup after
                 # a slot frees up.
@@ -369,43 +397,24 @@ def main() -> None:
                                      mk[:8], _lp / p["size"] if p["size"] else 0,
                                      p.get("peak", 0.0), now - p["t"])
                             continue
-                        mark = p.get("last_px", 0.0) * p["qty_tokens"]
-                        if mark <= 0:
-                            # never got a trustworthy print: price the exit
-                            # with a read-only venue quote instead of
-                            # holding the slot forever.
-                            q = order_quote(mk, SOL, p["qty_base"])
-                            if q and q.get("outAmount"):
-                                mark = int(q["outAmount"]) / LAMPORTS
-                        if mark <= 0:
-                            p["misses"] = p.get("misses", 0) + 1
-                            if L.rug_give_up(p["misses"]):
-                                log.warning(
-                                    "SHADOW rug-close (no mark) %s", mk[:8])
-                                close_position(mk, "rug", 0.0)
+                        # quote-fill exits (see the per-print exit above):
+                        # no token-dependent build in shadow.
+                        q, qerr = order_quote_ex(mk, SOL, p["qty_base"])
+                        fill = quote_fill_sol(q)
+                        if fill:
+                            log.info("SHADOW sweep exit fill out=%.6f SOL",
+                                     fill)
+                            close_position(mk, why, fill)
                             continue
-                        try:
-                            rc = L.place_order(
-                                mk, SOL, p["qty_base"], p["size"],
-                                shadow=True)
-                            log.info("SHADOW sweep exit quote out=%s",
-                                     rc.out_amount)
-                        except L.NoQuote as exc:
-                            log.info("SHADOW sweep no-quote %s: %s",
-                                     mk[:8], exc)
-                            if "throttled" in str(exc):
-                                continue  # politeness gap, not a miss
-                            if not L.venue_miss(exc):
-                                # our side (auth/quota/network): never a
-                                # rug-close cause
-                                if (L.venue_auth_error(exc)
-                                        and L.once_auth_alert()):
-                                    ntf.send_alert(
-                                        "🔑 Jupiter order auth failing",
-                                        f"sweep exits degraded: "
-                                        f"{str(exc)[:120]}")
-                                p["cool_until"] = time.time() + 60.0
-                                continue
+                        kind = quote_failure_kind(qerr)
+                        log.info("SHADOW sweep no-quote %s: %s", mk[:8], qerr)
+                        if kind == "ours" and ("HTTP 401" in qerr
+                                               or "HTTP 403" in qerr) \
+                                and L.once_auth_alert():
+                            ntf.send_alert(
+                                "🔑 Jupiter order auth failing",
+                                f"sweep exits degraded: {qerr[:120]}")
+                        if kind == "venue":
                             p["misses"] = p.get("misses", 0) + 1
                             if L.rug_give_up(p["misses"]):
                                 log.warning(
@@ -413,12 +422,8 @@ def main() -> None:
                                     mk[:8], p["misses"])
                                 close_position(mk, "rug", 0.0)  # as above:
                                 # unclosable exit means zero realizable value
-                            continue
-                        except Exception as exc:
-                            log.warning("SHADOW sweep sign failed %s: %s",
-                                        mk[:8], exc)
-                            continue
-                        close_position(mk, why, mark)
+                        p["cool_until"] = time.time() + 60.0
+                        continue  # 'ours'/'other': back off, never a rug
 
     crashed = None
     try:

@@ -1,0 +1,10 @@
+00oct14: scanned=1200001 npaths=569 tr=17 mean=+0.00289 mean_tr=+0.0966 win=0.47
+06oct14: scanned=1200001 npaths=548 tr=18 mean=+0.00071 mean_tr=+0.0217 win=0.56
+12oct14: scanned=1200001 npaths=610 tr=19 mean=+0.00268 mean_tr=+0.0861 win=0.53
+18oct14: scanned=1200001 npaths=603 tr=15 mean=-0.00161 mean_tr=-0.0647 win=0.33
+00oct15: scanned=1200001 npaths=600 tr=21 mean=+0.00054 mean_tr=+0.0153 win=0.38
+06oct15: scanned=1200001 npaths=604 tr=18 mean=+0.00168 mean_tr=+0.0563 win=0.50
+12oct15: scanned=1200001 npaths=604 tr=19 mean=+0.00186 mean_tr=+0.0592 win=0.68
+18oct15: scanned=1200001 npaths=592 tr=14 mean=+0.00306 mean_tr=+0.1296 win=0.36
+OOS-G1: mean=+0.00148 lb=+0.00037 pass=True -> eval/results_oos_oct17_1200000.json
+rc=0

@@ -269,8 +269,11 @@ def check_guards(o: dict, taker: str, max_sol: float,
         if fee_bps > float(os.environ.get("LIVE_MAX_FEE_BPS", "200")):
             return False, f"total fee {fee_bps}bps over cap"
         if not o.get("transaction"):
+            err = str(o.get("error") or "")
             return False, (f"no transaction "
-                           f"(router={o.get('router')} code={o.get('errorCode')})")
+                           f"(router={o.get('router')} "
+                           f"code={o.get('errorCode')}"
+                           + (f" {err[:40]}" if err else "") + ")")
         # v1 transactions are never requested (ceiling "0") and the local
         # solders path is v0-exercised only: refuse anything else outright.
         if int(o.get("transactionVersion", 0)) != 0:
@@ -370,6 +373,16 @@ def place_order(input_mint: str, output_mint: str, amount_base: int,
             o = get_order(input_mint, output_mint, amount_base, taker,
                           wide, tip, critical=True)
             ok, why = check_guards(o, taker, max_sol, is_exit=is_exit)
+        if (not ok and why.startswith("no transaction")
+                and "insufficient funds" in why.lower() and not shadow):
+            # The real token balance can differ from the quoted amount
+            # (fees, rounding, partial fill of the buy): retry a shaved
+            # size once before classifying the exit as a venue miss.
+            shaved = int(amount_base * 0.98)
+            if 0 < shaved != amount_base:
+                o = get_order(input_mint, output_mint, shaved, taker,
+                              wide, tip, critical=True)
+                ok, why = check_guards(o, taker, max_sol, is_exit=is_exit)
         if not ok and why.startswith("no transaction"):
             raise NoQuote(f"no executable tx: {why}")
     if not ok:

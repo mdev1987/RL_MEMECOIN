@@ -925,6 +925,95 @@ def test_jup_quote_key_failover():
             assert seen == ["dead", "backup"], seen
 
 
+def test_shadow_quote_fill_helpers():
+    # run76b postmortem: shadow exits must be quote-fills (the wallet never
+    # holds the tokens), and only genuine no-route failures may ever count
+    # toward rug-give-up.
+    from bot.shadow_loop import quote_fill_sol, quote_failure_kind
+    assert quote_fill_sol({"outAmount": "8500000"}) == 0.0085
+    assert quote_fill_sol({"outAmount": "0"}) is None
+    assert quote_fill_sol({"outAmount": "abc"}) is None
+    assert quote_fill_sol(None) is None
+    assert quote_failure_kind(
+        'order HTTP 400: {"error":"Failed to get quotes"}') == "venue"
+    assert quote_failure_kind("order no quote: {}") == "venue"
+    assert quote_failure_kind("order error: timeout") == "ours"
+    assert quote_failure_kind('order HTTP 401: {"code":401}') == "ours"
+    assert quote_failure_kind("order HTTP 429: too many") == "ours"
+    assert quote_failure_kind("order HTTP 503: nope") == "ours"
+    assert quote_failure_kind("mystery") == "other"
+
+
+def test_order_quote_ex_reasons():
+    import os
+    from unittest.mock import patch
+    from bot import jup
+
+    class _R:
+        def __init__(self, code, body):
+            self.status_code = code
+            self.ok = code == 200
+            self.text = body
+
+        def json(self):
+            import json as _j
+            return _j.loads(self.text)
+
+    with patch.dict(os.environ, {"JUPITER_API_KEY": "k"}):
+        with patch("bot.jup.requests.get",
+                   return_value=_R(400, '{"error":"Failed to get quotes"}')):
+            q, why = jup.order_quote_ex("A", "B", 100)
+            assert q is None and why.startswith("order HTTP 400")
+        with patch("bot.jup.requests.get", return_value=_R(
+                200, '{"inAmount":"1","outAmount":"2","routePlan":[]}')):
+            q, why = jup.order_quote_ex("A", "B", 100)
+            assert q and q["outAmount"] == "2" and why == ""
+        with patch("bot.jup.requests.get", side_effect=RuntimeError("boom")):
+            q, why = jup.order_quote_ex("A", "B", 100)
+            assert q is None and why.startswith("order error")
+
+
+def test_live_exit_insufficient_funds_shaves():
+    # a real token balance a hair below the quoted amount must not become
+    # a venue miss: the live exit retries once with 98% of the size.
+    import os
+    from unittest.mock import patch
+    from bot import live
+
+    class _KP:
+        def pubkey(self):
+            return "TAKER"
+
+        def sign_message(self, m):
+            class _S:
+                def verify(self, p, msg):
+                    return True
+            return _S()
+
+    no_tx = _live_order(error="Insufficient funds")
+    del no_tx["transaction"]
+    env = {"LIVE_MAX_SOL": "1.0", "JUP_MIN_INTERVAL_S": "0",
+           "LIVE_EXIT_SLIPPAGE_BPS": "2500", "LIVE_WIDE_RETRY_BPS": "5000"}
+    amounts = []
+
+    def _go(inp, out, amt, taker, slip, tip, critical=False):
+        amounts.append(amt)
+        return dict(no_tx) if len(amounts) < 3 else _live_order()
+
+    with patch.dict(os.environ, env):
+        with patch("bot.live.killed", return_value=False), \
+             patch("bot.live._load_keypair", return_value=_KP()), \
+             patch("bot.live.sign_order", return_value="c2ln"), \
+             patch("bot.live.execute_signed",
+                   return_value={"status": "Success", "signature": "sig",
+                                 "slot": "1"}), \
+             patch("bot.live.confirm_signature", return_value=True), \
+             patch("bot.live.get_order", side_effect=_go):
+            rc = live.place_order("A", live.SOL, 1000, 0.01, shadow=False)
+            assert rc
+    assert amounts == [1000, 1000, 980], amounts
+
+
 def test_shadow_tape_bounded():
     # Live regression: tapes only marked done inside the entry gate meant
     # that with MAXOPEN positions stuck open, arrays grew unbounded until

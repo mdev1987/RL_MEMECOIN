@@ -297,6 +297,13 @@ def main(require_live_flag: bool = True) -> None:
                                        SIZE_SOL)
                     qty = int(int(rc.out_amount) if str(rc.out_amount).isdigit()
                               else 0)
+                    if not rc.shadow:
+                        # executed buys: prefer the actual received amount
+                        # (quoted != received by fees/rounding, and a sell
+                        # of the quoted amount can fail "Insufficient funds")
+                        actual = getattr(rc, "total_out", "")
+                        if str(actual or "").isdigit() and int(actual) > 0:
+                            qty = int(actual)
                     poss = load_positions()
                     poss[mint] = {"t": time.time(), "size": SIZE_SOL,
                                   "qty_base": qty, "decimals": dec,

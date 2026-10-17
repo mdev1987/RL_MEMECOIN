@@ -120,5 +120,30 @@ failures; all are now fixed and covered by tests (56 total):
   Tests: `test_venue_miss_classification`, `test_get_order_key_failover`,
   `test_jup_quote_key_failover`. 64 tests total.
 
+### run76b (same day) — false rugs in shadow, and why shadow exits are quote-fills
+
+- **Sells cannot be built in shadow.** The wallet signs buys but never
+  broadcasts, so it never holds the tokens: every sell build fails with
+  `Insufficient funds` (masked as "no executable tx, router=metis"), and
+  5 such misses booked two positions at -100% while the venue quoted
+  85-105% of their cost. Shadow exits are now **quote-fills**: the exit
+  value comes from the read-only `/order` quote (the same estimator paper
+  uses) and the position closes at that value. The token-dependent build
+  path is exercised in dust with real fills. Test: `test_shadow_quote_fill_helpers`.
+- Failure reasons are classified: only venue no-route (`HTTP 400 failed
+  to get quotes`, `order no quote`) counts toward rug-give-up; auth/quota/
+  network ("ours") back off and never zero a position.
+- Live exits additionally retry once at 98% size when the venue reports
+  `Insufficient funds` (real balance vs quoted amount), and live positions
+  now use the executed buy's actual received tokens (`totalOutputAmount`)
+  as `qty_base` instead of the quote. Test:
+  `test_live_exit_insufficient_funds_shaves`.
+- **Fresh OOS (frozen config, Oct 14-17 2026, 15 hour-clusters, 238 trades,
+  1.2M lines/hour): mean +0.00113, lower95 +0.00040 → gate pass.**
+  In-sample pooled-14 was +0.00196: the edge is smaller on fresh data but
+  still positive and significant. Evidence: `eval/results_oos_fresh15_1200000.json`.
+
+67 tests total.
+
 Safety defaults unchanged: shadow never executes; live requires
 `LIVE_TRADING=1 LIVE_CONFIRM=YES`; `data/LIVE_KILL` stops everything.

@@ -59,12 +59,20 @@ def _api_keys(replay: bool = False) -> list[str]:
     return out
 
 
-def order_quote(input_mint: str, output_mint: str, amount_base: int,
-                timeout: float = 10.0, replay: bool = False) -> dict | None:
-    """GET /swap/v2/order (read-only). Returns quote dict or None."""
+def order_quote_ex(input_mint: str, output_mint: str, amount_base: int,
+                   timeout: float = 10.0,
+                   replay: bool = False) -> tuple[dict | None, str]:
+    """GET /swap/v2/order (read-only). Returns (quote, failure reason).
+
+    The reason lets callers classify misses honestly (venue has no route
+    vs. our own auth/quota/network trouble) instead of treating any
+    failure as "the mint is dead".
+    """
     keys = _api_keys(replay)
-    if not keys or amount_base <= 0:
-        return None
+    if not keys:
+        return None, "no api key"
+    if amount_base <= 0:
+        return None, "bad amount"
     try:
         o = None
         for i, k in enumerate(keys):
@@ -79,10 +87,10 @@ def order_quote(input_mint: str, output_mint: str, amount_base: int,
             break
         if not o.ok:
             log.debug("jup order HTTP %s: %s", o.status_code, o.text[:120])
-            return None
+            return None, f"order HTTP {o.status_code}: {o.text[:120]}"
         o = o.json()
         if "outAmount" not in o or "routePlan" not in o:
-            return None
+            return None, f"order no quote: {str(o)[:120]}"
         return {
             "inAmount": o.get("inAmount"), "outAmount": o.get("outAmount"),
             # /order returns priceImpact (percentage points); the older
@@ -92,10 +100,17 @@ def order_quote(input_mint: str, output_mint: str, amount_base: int,
             "route": [(s.get("percent"),
                        (s.get("swapInfo") or {}).get("label"))
                       for s in o.get("routePlan", [])],
-        }
+        }, ""
     except Exception as exc:
         log.debug("jup quote miss: %s", str(exc)[:120])
-        return None
+        return None, f"order error: {str(exc)[:120]}"
+
+
+def order_quote(input_mint: str, output_mint: str, amount_base: int,
+                timeout: float = 10.0, replay: bool = False) -> dict | None:
+    """GET /swap/v2/order (read-only). Returns quote dict or None."""
+    return order_quote_ex(input_mint, output_mint, amount_base,
+                          timeout=timeout, replay=replay)[0]
 
 
 def fmt_quote(q: dict | None, side: str) -> str | None:

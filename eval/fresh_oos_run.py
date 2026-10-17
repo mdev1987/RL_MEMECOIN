@@ -14,6 +14,7 @@ from eval_oos_fresh import eval_file
 from eval.gate import gate_g1
 
 MAX_LINES = int(os.environ.get("OOS_MAX_LINES", "300000"))
+TAG = os.environ.get("OOS_TAG", "oct17")
 
 
 def main(files):
@@ -41,7 +42,7 @@ def main(files):
     g = gate_g1(by_day)
     out = {"gate": g, "per_day": by_day, "scanned": scanned,
            "max_lines": MAX_LINES, "files": files, "skipped": skipped}
-    path = f"eval/results_oos_oct17_{MAX_LINES}.json"
+    path = f"eval/results_oos_{TAG}_{MAX_LINES}.json"
     with open(path, "w") as fh:
         json.dump(out, fh)
     print(f"OOS-G1: mean={g['mean']:+.5f} lb={g['lower95']:+.5f} "
