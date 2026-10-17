@@ -1,0 +1,10 @@
+shadow run79 (2026-10-17 16:10:52 -> 17:40:52, 90 min, live pump.fun stream,
+quote-fill exits; code c3a2f90-era, shadow paths unchanged since 9828944)
+buys=8 closes=7 W=1 L=6 pnl=-0.00328 (1 open at end)
+  stale: n=4 pnl=-0.00146
+  stop: n=2 pnl=-0.00308
+  trail: n=1 pnl=+0.00126
+entry: ghost=2 sign_failed=4 noquote=0
+exit no-quote=0 sweep no-quote=0 rug-close=0
+fills: 3 per-print + 4 sweep = 7 closes, all at read-only sell quotes
+final: bal=0.9967 W=1 L=6 crashed=no

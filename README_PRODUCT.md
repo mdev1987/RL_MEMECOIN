@@ -19,7 +19,7 @@ jumps (regression: 2026-10-12 +26154% event is now `bad-tick`, never booked).
   Old global stride visited only 4 offsets for 140-row files and permanently missed tradeables — fixed.
 - Observability: every cycle logs `skip={liq-fail, wallet:duplicate, strategy:filtered, ...}`.
 - Risk: 0.5 SOL cap, 15% kill-DD, daily-loss halt, rate limit, paper `--paper` default.
-- Deterministic seeds; 69 unit tests (`python -m tests` runner).
+- Deterministic seeds; 71 unit tests (`python -m tests` runner).
 - Run: `.venv/bin/python -m tests`, `.venv/bin/python -m bot.run --paper`.
 - Daemon: `oxmgr apply ./oxfile.toml`, logs `oxmgr logs meme-paper --lines 200`.
 
@@ -79,7 +79,7 @@ Key lives in `.env.signer` (600, gitignored); paper daemons never load it.
 All replay/OOS commands run offline (no Jupiter key needed):
 
 ```
-.venv/bin/python -m tests                                # 69 tests
+.venv/bin/python -m tests                                # 71 tests
 curl -sSLo /tmp/h.jsonl.zst https://replay.pumpapi.io/2026/10/17/05.jsonl.zst
 OOS_MAX_LINES=1200000 OOS_TAG=oct17_h05 \
   .venv/bin/python -m eval.fresh_oos_run /tmp/h.jsonl.zst
@@ -94,7 +94,7 @@ SHADOW=1 LIVE_TRADING=1 LIVE_CONFIRM=YES REPLAY_PATHS=... \
 ## Update 2026-10-17 — live-path hardening (from shadow-run evidence)
 
 Shadow runs on the live stream (signed-never-sent) surfaced three exit-path
-failures; all are now fixed and covered by tests (69 total; the full
+failures; all are now fixed and covered by tests (71 total; the full
 finding log follows):
 
 - **Exits could not be built.** Jupiter returned routes without executable
@@ -206,7 +206,26 @@ the fresh replay OOS gate remains the profitability measure. The entry
 filter vetoed 15 ghost tapes and 5 impact-guard candidates (fail-closed).
 Evidence: `eval/shadow_run77_report.txt`.
 
-69 tests total.
+### shadow run78/79 + parity soaks 2/3 (same day) — in-loop shadow exits
+
+- Parity soak 2 booked a **false −100% rug**: the live loop's SHADOW sell
+  build fails with "Insufficient funds" (the shadow wallet never holds
+  tokens) and five of those counted as venue misses. Fixed: `insufficient
+  funds` is our side (never a venue miss), and SHADOW exits close at the
+  read-only quote via `shadow_exit_receipt` (shadow_loop semantics).
+  Soak 3 (18 cycles): **0 rug-closes**, 0 errors, 1 buy, 3 counted guard
+  skips. Tests: `test_venue_miss_insufficient_funds_is_ours`,
+  `test_shadow_exit_receipt_uses_quote`.
+- Shadow run78 was killed early by a host restart (1h09m, 5 closes,
+  partial, net −0.0041). **Shadow run79 ran the full 90 min on the live
+  stream: 8 buys / 7 closes (4 stale, 2 stop, 1 trail), 0 rugs, 0 exit
+  failures, clean final line, net −0.00328 SOL on 0.07 SOL deployed.**
+  Thin live samples (5-10 closes) swing on fat tails; the replay OOS gate
+  remains the profitability measure.
+  Evidence: `eval/shadow_run79_report.txt`,
+  `eval/parity_soak3_report.txt`.
+
+71 tests total.
 
 Safety defaults unchanged: shadow never executes; live requires
 `LIVE_TRADING=1 LIVE_CONFIRM=YES`; `data/LIVE_KILL` stops everything.
