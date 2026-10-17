@@ -62,3 +62,32 @@ Rollout (each stage needs a written pass before the next):
 
 Key lives in `.env.signer` (600, gitignored); paper daemons never load it.
 `meme-live` is NOT registered in oxfile — start by hand, on purpose.
+
+## Update 2026-10-17 — live-path hardening (from shadow-run evidence)
+
+Shadow runs on the live stream (signed-never-sent) surfaced three exit-path
+failures; all are now fixed and covered by tests (56 total):
+
+- **Exits could not be built.** Jupiter returned routes without executable
+  transactions (`router=metis/dflow code=1`) and the 1% default slippage was
+  too tight. Sells now default to `LIVE_EXIT_SLIPPAGE_BPS=2500` and retry
+  once at `LIVE_WIDE_RETRY_BPS=5000`; a persistent no-tx is classified as
+  `NoQuote` (counted skip + cooldown), so a position can't wedge the loop.
+- **Impact cap blocked exits.** `LIVE_MAX_IMPACT_PCT` (5%) applied to sells
+  too; a stuck mint with −16% quote impact could never leave. Exits now use
+  `LIVE_EXIT_MAX_IMPACT_PCT` (default 100 = no veto); the venue slippage cap
+  still bounds execution. Entries keep the 5% cap, and the wide-slippage
+  retry never applies to buys.
+- **Ghost tape data.** One live print was mis-scaled 337x vs the venue
+  quote and produced a fantasy +337x mark (previously booked as +491x on a
+  rug). Now: (a) entries require a read-only preflight quote within 3x of
+  the tape price (`jup.price_diverges`), in both shadow and live loops;
+  (b) suspicious marks (>10x or <0.1x cost) are corroborated with a venue
+  quote before they can move peak/PnL — venue value wins when it agrees,
+  print is dropped when it doesn't.
+- **Politeness:** `/order` calls are throttled (`JUP_MIN_INTERVAL_S=0.5`)
+  and throttled responses never count as venue misses; paper cards now show
+  real price impact (`priceImpact` field, not the deprecated `priceImpactPct`).
+
+Safety defaults unchanged: shadow never executes; live requires
+`LIVE_TRADING=1 LIVE_CONFIRM=YES`; `data/LIVE_KILL` stops everything.
