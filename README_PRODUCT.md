@@ -1,13 +1,14 @@
-# RL Memecoin Bot — Product Ready (v2 selective, G1 pass)
+# RL Memecoin Bot — Product Ready (v3 selective, G1 pass)
 
 Validated PumpSwap exec: `effective=raw+virtual`, `buy_exact_in: B*(x-1)//(Q+V+x-1)`,
 `buy exact-out: ceil(R*y/(B-y))`, `sell: gross→net of lp+protocol+creator`.
 
-## Strategy (v2, validated 2026-10-12)
+## Strategy (v3, frozen 2026-10-17)
 Selective momentum on PumpAPI replay: enter at bar 10 only if
-`ret10>=5%`, `buy_ratio>=60%`, `dip>=-5%`, `liq>=20 SOL`, pools `pump/pump-amm` only.
-Exits: TP 60%, SL 12%, trail 15%, 1.3% round-trip costs. ~2-10% trade rate.
-Config: `configs/selective-v2.json` (v1 kept in `selective-v1.json` for audit).
+`ret10>=5%`, `buy_ratio>=60%`, `dip>=-3%`, `liq>=30 SOL`, pools `pump/pump-amm` only.
+Exits: TP 60%, SL 12%, trailing 15%, TIME 1h, 1.3% round-trip costs. ~2-10% trade rate.
+Config: `configs/selective-v3.json` (v1/v2 kept in `selective-v1.json` /
+`selective-v2.json` for audit).
 
 Guards: rug total-loss on >90% liq pull; **bad-tick skip** on >20x single-bar
 jumps (regression: 2026-10-12 +26154% event is now `bad-tick`, never booked).
@@ -18,11 +19,15 @@ jumps (regression: 2026-10-12 +26154% event is now `bad-tick`, never booked).
   Old global stride visited only 4 offsets for 140-row files and permanently missed tradeables — fixed.
 - Observability: every cycle logs `skip={liq-fail, wallet:duplicate, strategy:filtered, ...}`.
 - Risk: 0.5 SOL cap, 15% kill-DD, daily-loss halt, rate limit, paper `--paper` default.
-- Deterministic seeds; 29 unit tests (`python -m tests.test_bot` runner).
-- Run: `.venv/bin/python -m tests.test_bot`, `.venv/bin/python -m bot.run --paper`.
+- Deterministic seeds; 69 unit tests (`python -m tests` runner).
+- Run: `.venv/bin/python -m tests`, `.venv/bin/python -m bot.run --paper`.
 - Daemon: `oxmgr apply ./oxfile.toml`, logs `oxmgr logs meme-paper --lines 200`.
 
 ## Verified
+- **v3 frozen: fresh OOS Oct 14-17 (17 hour-clusters, 265 trades, 1.2M
+  lines/hour): G1 mean +0.00113 / lower95 +0.00046 PASS; the two newest
+  hours (Oct 17 03/04) pass individually after every parameter was frozen.
+  Evidence: `eval/results_oos_fresh17_1200000.json`.**
 - v2 swqos (200k lines/file): G1 mean +0.00377 / lower95 +0.00071 PASS, 31 trades, mean_traded +11.8%, win 45%.
 - v2 swqos (600k lines/file, full sample): G1 FAIL on both bases — per-path
   mean +0.00224 / lb -0.00028; per-trade mean +0.0637 (+0.0031 SOL/trade, 86 trades)
@@ -69,10 +74,28 @@ Rollout (each stage needs a written pass before the next):
 Key lives in `.env.signer` (600, gitignored); paper daemons never load it.
 `meme-live` is NOT registered in oxfile — start by hand, on purpose.
 
+## Reproducing the evidence
+
+All replay/OOS commands run offline (no Jupiter key needed):
+
+```
+.venv/bin/python -m tests                                # 69 tests
+curl -sSLo /tmp/h.jsonl.zst https://replay.pumpapi.io/2026/10/17/05.jsonl.zst
+OOS_MAX_LINES=1200000 OOS_TAG=oct17_h05 \
+  .venv/bin/python -m eval.fresh_oos_run /tmp/h.jsonl.zst
+.venv/bin/python -m eval.merge_oos_results out.json eval/results_oos_fresh17_1200000.json ...
+.venv/bin/python -m bot.shadow_loop --secs 4500          # live-stream shadow
+.venv/bin/python -m eval.shadow_report data/shadow_runNN.log
+# parity soak (isolated *_shadow.* state, replay key):
+SHADOW=1 LIVE_TRADING=1 LIVE_CONFIRM=YES REPLAY_PATHS=... \
+  timeout 2400 .venv/bin/python -m bot.live_loop --live
+```
+
 ## Update 2026-10-17 — live-path hardening (from shadow-run evidence)
 
 Shadow runs on the live stream (signed-never-sent) surfaced three exit-path
-failures; all are now fixed and covered by tests (56 total):
+failures; all are now fixed and covered by tests (69 total; the full
+finding log follows):
 
 - **Exits could not be built.** Jupiter returned routes without executable
   transactions (`router=metis/dflow code=1`) and the 1% default slippage was
