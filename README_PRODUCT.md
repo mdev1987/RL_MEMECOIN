@@ -24,10 +24,10 @@ jumps (regression: 2026-10-12 +26154% event is now `bad-tick`, never booked).
 - Daemon: `oxmgr apply ./oxfile.toml`, logs `oxmgr logs meme-paper --lines 200`.
 
 ## Verified
-- **v3 frozen: fresh OOS Oct 14-17 (17 hour-clusters, 265 trades, 1.2M
-  lines/hour): G1 mean +0.00113 / lower95 +0.00046 PASS; the two newest
-  hours (Oct 17 03/04) pass individually after every parameter was frozen.
-  Evidence: `eval/results_oos_fresh17_1200000.json`.**
+- **v3 frozen: fresh OOS Oct 14-17 (22 hour-clusters, 339 trades, 1.2M
+  lines/hour): G1 mean +0.00090 / lower95 +0.00032 PASS; mixed recent
+  hours (3 of the newest 7 negative) keep it honest. Evidence:
+  `eval/results_oos_fresh22_1200000.json`.**
 - v2 swqos (200k lines/file): G1 mean +0.00377 / lower95 +0.00071 PASS, 31 trades, mean_traded +11.8%, win 45%.
 - v2 swqos (600k lines/file, full sample): G1 FAIL on both bases — per-path
   mean +0.00224 / lb -0.00028; per-trade mean +0.0637 (+0.0031 SOL/trade, 86 trades)
@@ -165,11 +165,13 @@ finding log follows):
   now use the executed buy's actual received tokens (`totalOutputAmount`)
   as `qty_base` instead of the quote. Test:
   `test_live_exit_insufficient_funds_shaves`.
-- **Fresh OOS (frozen config, Oct 14-17 2026, 17 hour-clusters, 265 trades,
-  1.2M lines/hour): mean +0.00113, lower95 +0.00046 → gate pass.**
-  The two newest hours (Oct 17 03:00, 04:00, downloaded after every
-  parameter was frozen) pass individually: +0.00170 / +0.00051,
-  16 / 11 trades. Evidence: `eval/results_oos_fresh17_1200000.json`.
+- **Fresh OOS (frozen config, Oct 14-17 2026, 22 hour-clusters, 339 trades,
+  1.2M lines/hour): mean +0.00090, lower95 +0.00032 → gate pass.**
+  All seven Oct-17 hours (03:00-09:00) were downloaded after every
+  parameter was frozen; individually they are mixed (+0.00170, +0.00051,
+  +0.00135, +0.00214, -0.00136, -0.00044, -0.00108). The newest hours are
+  weaker, so the fresh edge is smaller than in-sample — but still positive
+  and significant. Evidence: `eval/results_oos_fresh22_1200000.json`.
   In-sample pooled-14 was +0.00196: the edge is smaller on fresh data but
   still positive and significant. Evidence: `eval/results_oos_fresh15_1200000.json`.
 
