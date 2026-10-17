@@ -1081,8 +1081,8 @@ def test_shadow_report_parse():
         "2026-10-17 09:01:00,000 INFO SHADOW entry ghost MintB tape_px=1 venue_px=9 (skipped)",
         "2026-10-17 09:01:10,000 INFO SHADOW entry no-quote MintC: order HTTP 400: no routes",
         "2026-10-17 09:02:00,000 INFO SHADOW exit no-quote MintA: no executable tx: x",
-        "2026-10-17 09:03:00,000 INFO SHADOW SELL MintA take pnl=+0.00600 bal=1.0060 halted=False",
-        "2026-10-17 09:04:00,000 INFO SHADOW SELL MintA stop pnl=-0.00120 bal=1.0048 halted=False",
+        "2026-10-17 09:03:00,000 INFO SHADOW SELL MintA take pnl=+0.00600 bal=1.0060 halted=",
+        "2026-10-17 09:03:30,000 INFO SHADOW SELL MintA stop pnl=-0.00120 bal=1.0048 halted=False",
         "2026-10-17 09:05:00,000 INFO shadow done bal=1.0048 W=1 L=1 crashed=no",
     ])
     p = parse(text)

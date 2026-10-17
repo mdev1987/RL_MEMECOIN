@@ -10,7 +10,7 @@ import re
 import sys
 
 SELL = re.compile(
-    r"SHADOW SELL (\S+) (\S+) pnl=([+-][\d.]+) bal=([\d.]+) halted=(\w+)")
+    r"SHADOW SELL (\S+) (\S+) pnl=([+-][\d.]+) bal=([\d.]+) halted=(\S*)")
 BUY = re.compile(r"SHADOW BUY (\S+) epx=(\S+) vpx=(\S+)")
 DONE = re.compile(r"shadow done bal=([\d.]+) W=(\d+) L=(\d+) crashed=(\S+)")
 

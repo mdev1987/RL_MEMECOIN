@@ -1,0 +1,10 @@
+shadow run77 (2026-10-17 09:44:38 -> 10:59:39, 75 min, live pump.fun stream,
+quote-fill exits; commit 9828944 + 8f84e0d)
+buys=5 closes=5 W=1 L=4 pnl=-0.00319
+  stop: n=3 pnl=-0.00358
+  hold-end: n=2 pnl=+0.00039
+entry: ghost=15 sign_failed=5 noquote=0
+exit no-quote=0 sweep no-quote=0 rug-close=0
+final: bal=0.9968 W=1 L=4 crashed=no
+memory: 80MB RSS at 47 min (run75 grew unbounded -> OOM kill)
+ledger: 5 close rows, sum -0.00319 (wallet 0.996809788; delta 2e-7 = rounded pnl rows)
