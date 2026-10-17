@@ -145,5 +145,26 @@ failures; all are now fixed and covered by tests (56 total):
 
 67 tests total.
 
+### parity soak (same day) — live-loop findings
+
+`SHADOW=1 live_loop` over a fresh replay hour found four live-path issues
+before any real money moved:
+
+- `Wallet(start=0.0)` crashed the loop on its first tradeable signal
+  (`dd_stop / start` divide-by-zero). Start-unset ledgers now use the
+  absolute `dd_stop` below the high-water mark.
+  Test: `test_wallet_live_start0_no_crash`.
+- Successful opens were never recorded, so `can_open`'s dedup and hourly
+  rate limit never bound (the same mint was bought 4x in 40 minutes).
+  `Wallet.apply_open` marks the mint seen and clocks the hour.
+  Test: `test_wallet_apply_open_dedup_and_rate`.
+- Routine pre-trade guard rejections (impact cap, gasless fee payer) were
+  logged as "LIVE BUY FAILED" with a Telegram alert; they are counted
+  skips now (`skip["live:guard"]`), like paper's `filtered`.
+- Live exit PnL/ledger now uses the executed `totalOutputAmount` (real
+  proceeds), falling back to the tape mark only in SHADOW parity runs.
+
+69 tests total.
+
 Safety defaults unchanged: shadow never executes; live requires
 `LIVE_TRADING=1 LIVE_CONFIRM=YES`; `data/LIVE_KILL` stops everything.
