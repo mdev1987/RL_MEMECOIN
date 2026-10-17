@@ -452,6 +452,19 @@ def test_jup_price_diverges():
     assert price_diverges(1.0, 0.0)
 
 
+def test_live_shadow_paths_isolated():
+    from bot.live_loop import shadow_paths
+    w, p, l = shadow_paths("data/live_wallet.json",
+                           "data/live_positions.json",
+                           "data/live_decisions.jsonl")
+    assert w == "data/live_wallet_shadow.json", w
+    assert p == "data/live_positions_shadow.json", p
+    assert l == "data/live_decisions_shadow.jsonl", l
+    # unexpected naming still gets an isolated name, never a collision
+    w2, _, _ = shadow_paths("custom", "a.json", "b.jsonl")
+    assert w2 == "custom_shadow", w2
+
+
 def test_jup_decimals_cache_and_fail():
     from unittest.mock import patch
     from bot import jup

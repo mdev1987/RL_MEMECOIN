@@ -53,7 +53,9 @@ Exits run on live Jupiter marks (TP/SL/trail/TIME/STALE), never replay marks.
 Rollout (each stage needs a written pass before the next):
 1. **Shadow**: `SHADOW=1` — full order + local sign, never executes.
    Requires a funded taker (empty wallet fails closed with code 1).
-   Measure fill parity shadow-vs-paper for a week.
+   Measure fill parity shadow-vs-paper for a week. For exact loop parity
+   (venue marks, cycle cadence, isolated `*_shadow.*` state):
+   `SHADOW=1 LIVE_TRADING=1 LIVE_CONFIRM=YES python -m bot.live_loop --live`.
 2. **Dust**: `LIVE_TRADING=1 LIVE_CONFIRM=YES python -m bot.live_loop --live`
    with `LIVE_SIZE_SOL=0.01`, separate `live_wallet.json`. Kill via
    `touch data/LIVE_KILL`. Risk: total loss of deployed size is assumed.

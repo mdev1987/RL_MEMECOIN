@@ -74,6 +74,17 @@ def save_positions(p: dict) -> None:
     os.replace(tmp, POSITIONS)
 
 
+def shadow_paths(wallet: str, positions: str,
+                 ledger: str) -> tuple[str, str, str]:
+    """Return *_shadow.* variants so SHADOW=1 runs never touch real state."""
+    def _s(p: str, ext: str) -> str:
+        if p.endswith(ext):
+            return p[: -len(ext)] + "_shadow" + ext
+        return p + "_shadow"
+    return (_s(wallet, ".json"), _s(positions, ".json"),
+            _s(ledger, ".jsonl"))
+
+
 def live_mark(mint: str, qty_base: int) -> float | None:
     """Live SOL value of qty_base via quote (marks to market)."""
     q = order_quote(mint, SOL, qty_base)
@@ -111,12 +122,23 @@ def main(require_live_flag: bool = True) -> None:
         log.error(msg)
         ntf.send_alert("🔴 LIVE REFUSED", "; ".join(problems))
         raise SystemExit(msg)
+    if L.shadow_enabled():
+        # SHADOW=1 parity runs exercise the full path but never execute:
+        # keep them off the real live wallet/positions/ledger files.
+        global WALLET, POSITIONS, LEDGER
+        WALLET, POSITIONS, LEDGER = shadow_paths(WALLET, POSITIONS, LEDGER)
     hk = os.environ.get("HELIUS_API_KEY", "")
     w = Wallet(path=WALLET, start=0.0, daily_stop=0.05, dd_stop=0.10,
                max_pos=SIZE_SOL)
-    ntf.send_alert("🔴 LIVE TRADING ACTIVE",
-                   f"taker {taker[:8]} size {SIZE_SOL:g} SOL maxopen {MAXOPEN}")
-    log.info("LIVE active taker=%s size=%s", taker[:8], SIZE_SOL)
+    if L.shadow_enabled():
+        ntf.send_alert("🕶️ LIVE-LOOP SHADOW",
+                       f"no execution (SHADOW=1) • taker {taker[:8]} • "
+                       f"size {SIZE_SOL:g} SOL • maxopen {MAXOPEN}")
+    else:
+        ntf.send_alert("🔴 LIVE TRADING ACTIVE",
+                       f"taker {taker[:8]} size {SIZE_SOL:g} SOL maxopen {MAXOPEN}")
+    log.info("LIVE active taker=%s size=%s shadow=%s",
+             taker[:8], SIZE_SOL, L.shadow_enabled())
     visits: dict[str, int] = {p: 0 for p in REPLAYS}
     cycle = 0
     while True:
