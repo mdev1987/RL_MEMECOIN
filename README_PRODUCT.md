@@ -279,3 +279,46 @@ quote-honest and auditable; live/dust keep the 5 % default.
 
 Safety defaults unchanged: shadow never executes; live requires
 `LIVE_TRADING=1 LIVE_CONFIRM=YES`; `data/LIVE_KILL` stops everything.
+
+### run82 — 24 h realtime verdict (2026-10-18)
+
+First clean 24 h realtime sample on the frozen v3 rule: birth-anchored,
+SOL-quoted only, fills at read-only Jupiter round-trip quotes, size
+0.01 SOL, never executed. `crashed=no`, clean final line.
+
+- **20 gates → 20 shadow fills → 20 closes, 5W/15L, net −0.00889 SOL
+  (−4.5 %/trade on stake).** Ledger 0.9989 → 0.9900 (shared paper
+  ledger 1.0000 → 0.9900 incl. run81's final tail stop −0.00112).
+- **Execution quality is now clean:** 0 ghosts, 0 entry no-quotes,
+  0 sign failures, 0 impact blocks, 0 exit no-quotes, 0 rug-closes,
+  0 warnings. SOL-quote filter: run81 28 ghosts → run82 0.
+- Buckets: take 2 = +0.01288 (avg +64.4 %), **stop 11 = −0.02202
+  (avg −20.0 %)**, trail 6 = −0.00021, stale 1 = +0.00046 (25 min,
+  tape silent >600 s → exited at venue quote).
+- **The loss is stop gap-through.** At the nominal −12 % trigger the
+  11 stops would have cost −0.0132; realized −0.0220; the ~−0.0088
+  excess is the whole net. 7/11 stops filled worse than −12 %
+  (worst −80.9 % rug at 86 s: +34.9 % at 38 s, then collapsed; then
+  −29.5, −22.2, −20.3, −19.7, −16.0, −11.8 %). Most gap-throughs
+  happen within 3 s on thin pools.
+- Entry fills: venue premium over tape −1.2..−1.6 % at 17/20 gates,
+  −2.3 %/−3.5 % at two, +17.4 % at one (venue cheaper than a
+  stale-high tape). All fills at the quoted venue price.
+- **The legacy 5 % `priceImpact` cap would block 14/20 gates** —
+  both +60 % takes (−16.6, −75.3) and the worst rug (−22.3) included.
+  The field is uncorrelated with outcome at birth: replace it with a
+  vpx-vs-tape / round-trip-cost check, do not tune it. Shadow ran at
+  `LIVE_MAX_IMPACT_PCT=100`; live/dust still default to 5 % until the
+  replacement lands.
+- No trade reached the 1 h TIME rail (max hold 25 min, median 23 s) —
+  TIME is untested live.
+- **Verdict: not profitable in realtime at this sample.** The take
+  bucket works (+64 % avg, 2 hits); the stop gap-through is the lever.
+  Not fundable until exit execution (gap control) and/or entry pool
+  selection (pre-entry round-trip quote test) improves, and a longer
+  run confirms.
+- Contrast with the replay sim daemon (stopped 2026-10-18):
+  +16.9 %/trade modeled vs −4.5 %/trade realtime. The sim fills stops
+  at the bar minimum and overstates the take hit rate (22.6 % vs
+  10 %). Replay is background only; realtime shadow is the verdict.
+  Curve: `data/shadow_run82_curve.tsv`.
