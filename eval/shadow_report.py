@@ -21,8 +21,21 @@ def parse(text: str) -> dict:
         "final": None, "entry_skip": {}, "exit_noquote": {},
         "ghost": 0, "entry_sign_failed": 0, "rug_close": 0,
         "sweep_noquote": 0, "throttled": 0, "crashed": None, "done": False,
+        "sp_pass": 0, "sp_block": 0, "sp_dump": 0, "sp_marker": 0,
     }
     for ln in text.splitlines():
+        if "sp-pass" in ln:
+            out["sp_pass"] += 1
+            continue
+        if "sp-block" in ln:
+            out["sp_block"] += 1
+            continue
+        if "sp-dump" in ln:
+            out["sp_dump"] += 1
+            continue
+        if "sp-marker" in ln:
+            out["sp_marker"] += 1
+            continue
         m = SELL.search(ln)
         if m:
             why, pnl = m.group(2), float(m.group(3))
@@ -78,6 +91,8 @@ def report(text: str) -> str:
         lines.append(f"  noquote {n}x: {r}")
     lines.append(f"exit no-quote={sum(p['exit_noquote'].values())} "
                  f"sweep no-quote={p['sweep_noquote']} rug-close={p['rug_close']}")
+    lines.append(f"solpump: passed={p['sp_pass']} blocked={p['sp_block']} "
+                 f"dump_flags={p['sp_dump']} markers={p['sp_marker']}")
     for r, n in sorted(p["exit_noquote"].items(), key=lambda kv: -kv[1])[:3]:
         lines.append(f"  exit {n}x: {r}")
     if p["final"]:

@@ -357,3 +357,63 @@ Implemented after the run82 verdict, before run83:
 
 Environment defaults for run83/dust: `LIVE_MAX_DEVIATION_PCT=5`,
 `LIVE_MAX_ROUNDTRIP_PCT=8`; `LIVE_MAX_IMPACT_PCT` is no longer read.
+
+## Update 2026-10-19 — solpump.io data layer (goal: profitable with all ws/api)
+
+The vendor's full surface is now integrated (`bot/solpump.py` REST + WS
+client, `bot/sp_guards.py` decision guards, `scripts/solpump_report.py`
+forensics report). Everything is read-only and fail-open: when solpump
+is down the bot runs exactly the v3 loop above.
+
+**What is used where**
+
+- **Entry (every v3 signal, before any venue quote is spent).**
+  `sp_gate_check` pulls the vendor tape from the mint's birth anchor
+  (`swaps`, cursor paging), computes flow features as of now
+  (`sp_guards.flow_features`: per-side SOL in the last 1/3/10/30 s, net
+  flow, distinct wallets, outlier flags), then reads `safety` (honeypot /
+  mintable / freezable / tax / bundler concentration) and `dev-tokens`
+  (serial-deployer graveyard history). A block logs
+  `SHADOW sp-block <mint>: <reason> (tape …)` and skips the entry.
+- **While holding.** The WS feed subscribes `token:SOL:<mint>:swaps` +
+  `:price` + `:chart_markers`; swaps build a per-position buffer and arm
+  a **dump exit** on a single sell ≥ max(2 SOL, 1.5 % of mcap) or ≥ 6 SOL
+  of sells at ≤ −4 SOL net in 2 s. The dump is booked only when the
+  venue sell quote confirms ≥ 5 % loss (`SHADOW_DUMP_EXIT_DD`), so a
+  vendor blip can never phantom-stop. Markers are logged
+  (`SHADOW sp-marker …`), price updates kept per position.
+- **Context.** `trade/SOL/fee-estimate` is logged at startup; the
+  heartbeat carries `sig= sp_block= sp_swaps= sp_dumps= ws={…}`; the
+  report tool exercises every endpoint (token, pairs, safety, candles,
+  swaps, chart-markers, dev-tokens, holders, calls, top-traders,
+  fee-estimate ×3 tiers, scanner search/trenches, watchlist ranking).
+
+**Guard calibration (offline replay of every gate tape)**
+
+20 run82 gates + both run83 gates re-walked through the guard:
+**7 trades blocked, all losers** — GQEZbfJM(−0.00295), CaJ4ywnH
+(−0.00160), 2MA19PuY(−0.00203), AYLqD4Hn(−0.00222), 3FA5LF3R(−0.00197),
+63dz3RGF/(run83), BVpFpksf(run83) — **zero winners blocked**, including
+the +7.1 % take (4.4 SOL sell inside a +32 SOL net second: heavy two-way
+flow is not a dump) and the +5.8 % take. Replay P&L flips from −0.01175
+to +0.00188 for the kept books. Both run83 instant-stop entries are
+blocked (17.55 and 7.19 SOL sold in the gate second). The remaining big
+loss (8dcJQQxN, −0.00809) was a liquidity drain with healthy gate-time
+flow — not visible in any tape feature; it stays a known residual risk.
+
+Tunables (all env): `SP_FLOW_GUARD`, `SP_MIN_TAPE`, `SP_MAX_SELL_1S`,
+`SP_MAX_SELL_3S`, `SP_SELL3_NET_MAX`, `SP_MIN_NET_3S`,
+`SP_MAX_OUTLIER_SOL`, `SP_MIN_BUYERS`, `SP_MAX_DROP_1S/3S`,
+`SP_DUMP_WATCH`, `SP_DUMP_SINGLE_MIN_SOL`, `SP_DUMP_SINGLE_MCAP_FRAC`,
+`SP_DUMP_SUM_SOL`, `SP_DUMP_NET_SOL`, `SHADOW_DUMP_EXIT_DD`.
+
+Run84 (first run with the data layer):
+
+```
+oxmgr start --name meme-shadow --restart never --cwd "$PWD" \
+  --env SHADOW_RUN=84 --env SHADOW_SECS=172800 scripts/shadow_run.sh
+.venv/bin/python -m eval.shadow_report data/shadow_run84.log
+```
+
+Tests: 87/87 (`python -m tests`), including rule-order, no-lookahead,
+paging, fail-open and dump-corroboration cases.

@@ -1424,3 +1424,247 @@ def test_rug_give_up():
     assert live.rug_give_up(5)
     assert live.rug_give_up(99)
     assert live.rug_give_up(1, max_misses=1)
+
+
+def _sp_swap(ts_s, side, sol, px=1e-7, wallet="w1", outlier=False,
+             mc=200.0):
+    """Synthetic solpump swap item (REST tape / WS TOKEN_SWAPS shape)."""
+    return {"timestamp": int(ts_s * 1000), "side": side,
+            "amountNative": sol, "priceNative": px,
+            "walletAddress": wallet, "isOutlier": outlier,
+            "marketCapNative": mc}
+
+
+def test_solpump_flow_guard_blocks_dump_entry():
+    from bot import sp_guards as G
+    gate = 1_760_000_000.0
+    tape = [_sp_swap(gate - 20 + i, "BUY", 0.5, wallet=f"b{i}")
+            for i in range(7)]
+    assert G.entry_flow_guard(G.flow_features(tape, gate))[0]
+    # a heavy one-second sell sweep -> blocked (net stays modest so the
+    # one-second sell rule is the one that fires)
+    tape2 = tape + [_sp_swap(gate - 0.9, "BUY", 5.5, wallet="b9"),
+                    _sp_swap(gate - 0.5, "SELL", 6.0, wallet="dumper")]
+    ok, why = G.entry_flow_guard(G.flow_features(tape2, gate))
+    assert not ok and "last 1s" in why, why
+    # sustained dumping (strongly negative net) -> blocked
+    tape3 = ([_sp_swap(gate - 2.8 + i * 0.1, "BUY", 0.5, wallet=f"b{i}")
+              for i in range(2)] +
+             [_sp_swap(gate - 2.5 + i, "SELL", 1.0, wallet=f"s{i}")
+              for i in range(6)])
+    ok, why = G.entry_flow_guard(G.flow_features(tape3, gate))
+    assert not ok and "net" in why, why
+    # two-way hot flow is NOT a dump: a 4.4 SOL sell inside a +9.6 SOL
+    # net-buy window must pass (run82 AnAajKQU was a +7.1 % take)
+    tape4 = ([_sp_swap(gate - 2.0 + i * 0.2, "BUY", 0.5, wallet=f"b{i}")
+              for i in range(4)] +
+             [_sp_swap(gate - 0.8, "BUY", 12.0, wallet="whale"),
+              _sp_swap(gate - 0.5, "SELL", 4.4, wallet="dumper")])
+    ok, why = G.entry_flow_guard(G.flow_features(tape4, gate))
+    assert ok, why
+    # nearly empty tape: no flow opinion (fail-open, vendor lag)
+    assert G.entry_flow_guard(G.flow_features([], gate))[0]
+    assert G.entry_flow_guard(G.flow_features(tape[:2], gate))[0]
+
+
+def test_solpump_flow_window_has_no_lookahead():
+    from bot import sp_guards as G
+    gate = 1_760_000_000.0
+    tape = [_sp_swap(gate - 5, "BUY", 0.5, wallet="b1"),
+            _sp_swap(gate + 0.2, "SELL", 9.0, wallet="dumper")]
+    f = G.flow_features(tape, gate)
+    assert f["s1_sol_sells"] == 0.0
+    assert G.entry_flow_guard(f)[0]
+
+
+def test_solpump_safety_guard():
+    from bot import sp_guards as G
+    assert G.safety_guard(None)[0]
+    assert G.safety_guard({})[0]
+    assert G.safety_guard({"audit": {"honeypot": True}})[0] is False
+    ok, why = G.safety_guard({"audit": {"mintable": True}})
+    assert not ok and "mintable" in why
+    assert G.safety_guard({"audit": {"taxBuy": 5}})[0] is False
+    ok, why = G.safety_guard({"holders": {"bundlersPct": 95}})
+    assert not ok and "bundlers" in why
+    assert G.safety_guard(
+        {"audit": {"honeypot": False, "mintable": False, "freezable": False,
+                   "taxBuy": 0, "taxSell": 0},
+         "holders": {"bundlersPct": 12}})[0]
+
+
+def test_solpump_dev_guard():
+    from bot import sp_guards as G
+    assert G.dev_guard(None)[0]
+    assert G.dev_guard({"stats": {"total": 2, "migrated": 0}})[0]
+    ok, why = G.dev_guard({"stats": {"total": 9, "migrated": 0}})
+    assert not ok and "0 migrated" in why
+    assert G.dev_guard({"stats": {"total": 9, "migrated": 3}})[0]
+
+
+def test_solpump_dump_trigger():
+    from bot import sp_guards as G
+    now = 1_760_000_000.0
+    # a 3.5 SOL sell against a 200 SOL mcap (threshold max(2, 3) = 3)
+    rec = G.recent_from_event([_sp_swap(now - 0.5, "SELL", 3.5, mc=200.0)],
+                              now)
+    hit, why = G.dump_trigger(rec, now)
+    assert hit and "single sell" in why
+    # mcap scaling: 3.0 SOL is small for a 5000 SOL mcap (threshold 75)
+    rec = G.recent_from_event([_sp_swap(now - 0.5, "SELL", 3.0, mc=5000.0)],
+                              now)
+    assert not G.dump_trigger(rec, now)[0]
+    # six sub-threshold sells that sum past the burst limits
+    rec = G.recent_from_event([_sp_swap(now - 1.8 + i * 0.3, "SELL", 1.1,
+                                        mc=200.0) for i in range(6)], now)
+    hit, why = G.dump_trigger(rec, now)
+    assert hit and "sells" in why
+    # sells outside the watch window are ignored
+    rec = G.recent_from_event([_sp_swap(now - 30, "SELL", 9.0)], now)
+    assert not G.dump_trigger(rec, now)[0]
+
+
+def test_solpump_swaps_since_paging():
+    from bot import solpump as SP
+    orig = SP.swaps
+    base = 1_760_000_000.0
+    try:
+        pages = {None: {"swaps": [_sp_swap(base + 3, "BUY", 0.1),
+                                  _sp_swap(base + 2, "BUY", 0.1)],
+                        "nextCursor": "c1"},
+                 "c1": {"swaps": [_sp_swap(base + 1, "BUY", 0.1),
+                                  _sp_swap(base, "BUY", 0.1)],
+                        "nextCursor": "c2"},
+                 "c2": {"swaps": [_sp_swap(base - 500, "BUY", 0.1)],
+                        "nextCursor": None}}
+        calls = []
+
+        def fake_swaps(mint, quote="SOL", limit=100, cursor=None, **kw):
+            calls.append(cursor)
+            return pages.get(cursor)
+
+        SP.swaps = fake_swaps
+        out = SP.swaps_since("M", floor_s=base + 0.5, max_pages=5)
+        assert len(out) == 4
+        assert calls == [None, "c1"]  # stops once a page reaches the floor
+        SP.swaps = lambda *a, **k: {"swaps": []}
+        assert SP.swaps_since("M", 0.0) == []
+        # cursor never advancing -> stop (defensive against a vendor loop)
+        SP.swaps = lambda *a, **k: {
+            "swaps": [_sp_swap(base, "BUY", 0.1)], "nextCursor": "same"}
+        assert len(SP.swaps_since("M", 0.0, max_pages=5)) == 2
+    finally:
+        SP.swaps = orig
+
+
+def test_solpump_rest_shapes():
+    from bot import solpump as SP
+    got = []
+
+    class R:
+        status_code = 200
+
+        def json(self):
+            return {"ok": True}
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        got.append(("GET", url, dict(params or {})))
+        return R()
+
+    def fake_post(url, json=None, params=None, headers=None, timeout=None):
+        got.append(("POST", url, {}))
+        return R()
+
+    orig_get, orig_post = SP.requests.get, SP.requests.post
+    try:
+        SP.requests.get, SP.requests.post = fake_get, fake_post
+        assert SP.swaps("M", limit=500, frm=99, min_usd=5) == {"ok": True}
+        method, url, params = got[-1]
+        assert method == "GET" and url.endswith("/token/SOL/M/swaps")
+        assert params == {"limit": 100, "from": 99, "minUsd": 5}
+        SP.scanner_search("SOL:M")
+        assert got[-1][2] == {"lookup": "SOL:M"}
+        SP.scanner_trenches("graduating")
+        assert got[-1][0] == "POST"
+        assert got[-1][1].endswith("/scanner/trenches/graduating")
+        SP.fee_estimate("SOL", "HIGH")
+        assert got[-1][2] == {"type": "HIGH"}
+    finally:
+        SP.requests.get, SP.requests.post = orig_get, orig_post
+
+
+def test_solpump_event_parsing():
+    from bot import solpump as SP
+    assert SP.swaps_from_event([{"side": "BUY"}]) == [{"side": "BUY"}]
+    assert SP.swaps_from_event({"swaps": [{"side": "SELL"}]}) \
+        == [{"side": "SELL"}]
+    assert SP.swaps_from_event({"side": "BUY", "amountNative": 1.0})[0]["side"] \
+        == "BUY"
+    assert SP.swaps_from_event("nope") == []
+    assert SP.price_from_event({"priceNative": "1.5e-7"}) == 1.5e-7
+    assert SP.price_from_event({"quote": {"priceNative": 2e-7}}) == 2e-7
+    assert SP.price_from_event({}) is None
+    assert SP.swap_ts({"timestamp": 1_700_000_000_000}, 0.0) \
+        == 1_700_000_000.0
+    assert SP.swap_ts({"timestamp": 1_700_000_000}, 0.0) == 1_700_000_000.0
+    assert SP.swap_ts({}, 500.0) == 500.0
+    assert SP.swap_ts({"ageSeconds": 3}, 500.0) == 497.0
+
+
+def test_solpump_feed_dispatch():
+    from bot import solpump as SP
+    seen = []
+    feed = SP.Feed(lambda *a: seen.append(a))
+    feed._dispatch('{"type":"pong"}')
+    feed._dispatch('{"type":"subscribed","topic":"t","subId":"s1"}')
+    assert feed._subids == {"t": "s1"}
+    feed._dispatch('{"topic":"token:SOL:M:swaps","event":"TOKEN_SWAPS",'
+                   '"data":[{"side":"BUY"}]}')
+    assert seen and seen[-1][0] == "token:SOL:M:swaps"
+    feed._dispatch("not json")
+    feed._dispatch('{"type":"error","message":"x"}')
+    assert len(seen) == 1
+    feed.subscribe("a")
+    feed.unsubscribe("a")
+    assert "a" not in feed._want
+
+
+def test_shadow_sp_gate_check():
+    import time as _t
+    from bot import solpump as SP
+    from bot.shadow_loop import sp_gate_check
+    orig = (SP.swaps_since, SP.safety, SP.dev_tokens)
+    now = _t.time()
+    try:
+        clean = [_sp_swap(now - 2 + i * 0.2, "BUY", 0.5, wallet=f"b{i}")
+                 for i in range(6)]
+        SP.swaps_since = lambda *a, **k: clean
+        SP.safety = lambda *a, **k: None
+        SP.dev_tokens = lambda *a, **k: None
+        ok, why, feat = sp_gate_check("M", int((now - 600) * 1000))
+        assert ok and feat["n"] == 6
+        # dump tape blocks and safety/dev are then not even fetched
+        calls = []
+        SP.safety = lambda *a, **k: calls.append(1)
+        SP.swaps_since = lambda *a, **k: clean + [
+            _sp_swap(now - 0.3, "SELL", 6.0, wallet="d")]
+        ok, why, feat = sp_gate_check("M", int((now - 600) * 1000))
+        assert not ok and calls == [], why
+        # vendor down: fail-open to v3
+        SP.swaps_since = lambda *a, **k: []
+        ok, why, _ = sp_gate_check("M", int((now - 600) * 1000))
+        assert ok
+    finally:
+        SP.swaps_since, SP.safety, SP.dev_tokens = orig
+
+
+def test_shadow_dump_exit_needs_venue_loss():
+    from bot.shadow_loop import venue_exit_reason
+    size = 0.01
+    # venue corroborates a material loss -> book the dump
+    assert venue_exit_reason("dump", size, 0.01, 0.0090, 60.0) == "dump"
+    # venue still fine -> keep holding (no phantom stop from a vendor blip)
+    assert venue_exit_reason("dump", size, 0.01, 0.0099, 60.0) is None
+    # stop/trail/take still re-evaluated on the quote as before
+    assert venue_exit_reason("stop", size, 0.01, 0.0085, 60.0) == "stop"
+    assert venue_exit_reason("stop", size, 0.01, 0.0095, 60.0) is None

@@ -40,6 +40,8 @@ from bot.jup import (order_quote, order_quote_ex, price_deviation,
                      roundtrip_cost_pct, token_decimals, SOL, LAMPORTS)
 from bot import live as L
 from bot import signals as S
+from bot import solpump as SP
+from bot import sp_guards as SPG
 from notifier import get_notifier
 
 log = logging.getLogger("shadow_loop")
@@ -65,6 +67,13 @@ MAX_ROUNDTRIP = float(os.environ.get("LIVE_MAX_ROUNDTRIP_PCT", "8.0"))
 # A tape trigger the venue does not corroborate is vetoed; cool down so
 # one persistently mis-scaled tape cannot storm the quote API.
 VETO_COOL_S = float(os.environ.get("SHADOW_VETO_COOL_S", "5.0"))
+# solpump.io data layer (goal 2026-10-19 "profitable with all ws/api from
+# solpump.io"): at every v3 signal the vendor tape/safety/dev history are
+# read before a venue quote is spent; while holding, the live WS swaps
+# stream arms a dump exit that still needs venue corroboration (a
+# SHADOW_DUMP_EXIT_DD loss) before anything is booked.
+SP_ENABLED = SP.enabled()
+DUMP_DD = float(os.environ.get("SHADOW_DUMP_EXIT_DD", "0.05"))
 # Liveness: run82 had no heartbeat, so a dead stream looked like a quiet
 # market. Log counters every 5 min; warn at 60 s of total silence and
 # fail the run at 10 min (a half-open socket must not fake a 24 h run).
@@ -123,6 +132,10 @@ def venue_exit_reason(why: str, size: float, peak: float, fill: float,
     price triggers and are never vetoed. Returns the reason to book, or
     None to keep holding.
     """
+    if why == "dump":
+        # the vendor tape flagged an active dump while holding; the venue
+        # quote must corroborate a material loss or we keep holding
+        return "dump" if fill <= size * (1.0 - DUMP_DD) else None
     if why not in ("stop", "trail", "take"):
         return why
     return S.decide_exit(size, peak, fill, age_s)
@@ -217,6 +230,26 @@ def push_print(t: dict, px: float, act: str, liq: float,
     return False
 
 
+def sp_gate_check(mint: str, birth_ms: int) -> tuple[bool, str, dict]:
+    """solpump.io gate: tape flow + safety + dev history (fail-open).
+
+    Called at every v3 signal through asyncio.to_thread (requests is
+    synchronous). Pulls the vendor tape back to the mint's birth anchor,
+    computes flow features as of now, then checks the unambiguous
+    contract hazards. A missing tape/safety/dev (vendor down, brand-new
+    mint) never blocks: v3 still decides.
+    """
+    floor = (birth_ms / 1000.0) - 5.0 if birth_ms else time.time() - 120.0
+    tape = SP.swaps_since(mint, floor, max_pages=4)
+    feat = SPG.flow_features(tape, time.time())
+    ok, why = SPG.entry_flow_guard(feat)
+    if ok:
+        ok, why = SPG.safety_guard(SP.safety(mint))
+    if ok:
+        ok, why = SPG.dev_guard(SP.dev_tokens(mint))
+    return ok, why, feat
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--secs", type=float, default=0.0,
@@ -242,6 +275,7 @@ def main() -> None:
     t_end = time.time() + a.secs if a.secs > 0 else float("inf")
     last_prune = time.time()
     last_full_warn = 0.0
+    sp_feed = None  # solpump.io live WS feed (goal 2026-10-19)
 
     def close_position(mint: str, why: str, mark: float) -> None:
         if why == "rug":
@@ -251,6 +285,9 @@ def main() -> None:
             mark = 0.0
         p = poss.pop(mint)
         mints.pop(mint, None)  # window is over: tape is moot after close
+        if sp_feed is not None:
+            for ch in ("swaps", "price", "chart_markers"):
+                sp_feed.unsubscribe(f"token:{SP.QUOTE}:{mint}:{ch}")
         pnl = mark - p["size"]
         halted = w.apply_close(mint, pnl)
         ledger_append(LEDGER, ledger_row(
@@ -262,7 +299,8 @@ def main() -> None:
             ca=mint, name=mint[:12],
             reason="TP" if why == "take" else ("STOP" if why == "stop"
                     else ("TRAIL" if why == "trail"
-                          else ("RUG" if why == "rug" else "TIME"))),
+                          else ("DUMP" if why == "dump"
+                                else ("RUG" if why == "rug" else "TIME")))),
             mult=mark / p["size"] if p["size"] > 0 else 1.0,
             pnl_sol=pnl, hold_s=time.time() - p["t"],
             entry_px=p.get("entry_px"), exit_px=mark, size_sol=p["size"],
@@ -273,23 +311,65 @@ def main() -> None:
                  mint[:8], why, pnl, w.s.balance, halted)
 
     async def run():
-        nonlocal last_prune, last_full_warn
+        nonlocal last_prune, last_full_warn, sp_feed
         t0 = time.time()
         hb_t = t0
         last_msg = t0
         silent_warned = False
         st = {"prints": 0, "creates": 0, "gates": 0, "buys": 0}
+
+        def on_sp_event(topic: str, event: str, data, meta) -> None:
+            """solpump.io WS -> open positions: tape buffer + dump watch."""
+            parts = topic.split(":")
+            if len(parts) < 4 or parts[0] != "token":
+                return
+            p = poss.get(parts[2])
+            if p is None:
+                return
+            if parts[3] == "swaps":
+                rows = SPG.recent_from_event(SP.swaps_from_event(data),
+                                             time.time())
+                if rows:
+                    buf = p.setdefault("sp_recent", [])
+                    buf.extend(rows)
+                    if len(buf) > 400:
+                        del buf[:-400]
+                    st["sp_swaps"] = st.get("sp_swaps", 0) + len(rows)
+                    hit, dw = SPG.dump_trigger(buf, time.time())
+                    if hit and not p.get("dump"):
+                        p["dump"] = True
+                        p["dump_why"] = dw
+                        st["sp_dumps"] = st.get("sp_dumps", 0) + 1
+                        log.info("SHADOW sp-dump %s %s", parts[2][:8], dw)
+            elif parts[3] == "price":
+                px = SP.price_from_event(data)
+                if px:
+                    p["sp_px"] = px
+            elif parts[3] == "chart_markers":
+                st["sp_markers"] = st.get("sp_markers", 0) + 1
+                log.info("SHADOW sp-marker %s %s", parts[2][:8],
+                         json.dumps(data)[:200])
+
+        if SP_ENABLED:
+            sp_feed = SP.Feed(on_sp_event)
+            sp_feed.start()
+            fe = await asyncio.to_thread(SP.fee_estimate, "SOL", "MEDIUM")
+            log.info("SHADOW solpump on: feed=%s fee=%s", sp_feed.status(),
+                     json.dumps(fe)[:240] if fe else "n/a")
         async with websockets.connect(URL, max_size=50_000_000) as ws:
             log.info("shadow stream connected")
             while time.time() < t_end:
                 now = time.time()
                 if now - hb_t >= HEARTBEAT_S:
                     hb_t = now
-                    log.info("SHADOW heartbeat prints=%d creates=%d gates=%d "
-                             "buys=%d open=%d mints=%d uptime=%.1fh",
-                             st["prints"], st["creates"], st["gates"],
-                             st["buys"], len(poss), len(mints),
-                             (now - t0) / 3600.0)
+                    log.info("SHADOW heartbeat prints=%d creates=%d sig=%d "
+                             "gates=%d buys=%d sp_block=%d sp_swaps=%d "
+                             "sp_dumps=%d ws=%s open=%d mints=%d uptime=%.1fh",
+                             st["prints"], st["creates"], st.get("sig", 0),
+                             st["gates"], st["buys"], st.get("sp_skips", 0),
+                             st.get("sp_swaps", 0), st.get("sp_dumps", 0),
+                             (sp_feed.status() if sp_feed else "off"),
+                             len(poss), len(mints), (now - t0) / 3600.0)
                 silent = now - last_msg
                 if silent > SILENT_EXIT_S:
                     raise RuntimeError(
@@ -384,6 +464,8 @@ def main() -> None:
                     p["peak"] = max(p.get("peak", 0.0), mark)
                     why = S.decide_exit(p["size"], p["peak"], mark,
                                         time.time() - p["t"])
+                    if why is None and p.get("dump"):
+                        why = "dump"  # vendor tape flagged the dump
                     if why is None or w.s.halted:
                         continue
                     if time.time() < p.get("cool_until", 0.0):
@@ -453,6 +535,36 @@ def main() -> None:
                     ok, why_not = w.can_open(SIZE_SOL, m)
                     if not ok:
                         continue
+                    # solpump.io data layer: the vendor tape carries
+                    # per-trade wallet/bot/outlier flags that PumpAPI
+                    # prints lack. Both run83 gates entered into an active
+                    # dump (4-6 SOL SELL prints inside the gate second):
+                    # read the vendor tape before spending a venue quote.
+                    if sp_feed is not None:
+                        st["sig"] = st.get("sig", 0) + 1
+                        sp_ok, sp_why, sp_feat = await asyncio.to_thread(
+                            sp_gate_check, m, int(t["t0"]))
+                        if not sp_ok:
+                            st["sp_skips"] = st.get("sp_skips", 0) + 1
+                            log.info(
+                                "SHADOW sp-block %s: %s (tape n=%s buys=%s "
+                                "sells=%s net3=%.2f s1sells=%.2f buyers=%s)",
+                                m[:8], sp_why, sp_feat.get("n"),
+                                sp_feat.get("n_buys"), sp_feat.get("n_sells"),
+                                sp_feat.get("s3_net", 0.0),
+                                sp_feat.get("s1_sol_sells", 0.0),
+                                sp_feat.get("buyers"))
+                            continue
+                        log.info(
+                            "SHADOW sp-pass %s n=%s buy=%.2f sell=%.2f "
+                            "net3=%.2f s1sells=%.2f buyers=%s outlier=%.2f",
+                            m[:8], sp_feat.get("n"),
+                            sp_feat.get("sol_buys", 0.0),
+                            sp_feat.get("sol_sells", 0.0),
+                            sp_feat.get("s3_net", 0.0),
+                            sp_feat.get("s1_sol_sells", 0.0),
+                            sp_feat.get("buyers"),
+                            sp_feat.get("outlier_sell_sol", 0.0))
                     # data-quality preflight: a read-only venue quote must
                     # broadly agree with the tape price the signal used; a
                     # mis-scaled tape (seen live: 337x) would otherwise buy
@@ -524,8 +636,17 @@ def main() -> None:
                                "qty_tokens": qty_base / (10 ** dec),
                                "entry_px": t["prices"][ENTRY_N - 1],
                                "entry_vpx": vpx,
-                               "peak": 0.0, "sig": rc.signature}
+                               "peak": 0.0, "sig": rc.signature,
+                               "sp_recent": []}
                     st["buys"] += 1
+                    if sp_feed is not None:
+                        # live vendor streams for the held mint: swap tape
+                        # (dump watch) + price + markers (event log)
+                        for ch in ("swaps", "price", "chart_markers"):
+                            sp_feed.subscribe(
+                                f"token:{SP.QUOTE}:{m}:{ch}",
+                                {"minUsd": "10"} if ch == "chart_markers"
+                                else None)
                     ntf.send_open(
                         ca=m, name=m[:12], price=t["prices"][ENTRY_N - 1],
                         size_sol=SIZE_SOL, balance_before=w.s.balance,
@@ -564,6 +685,8 @@ def main() -> None:
                     # TIME/STALE must fire here or positions sit forever.
                     for mk, p in list(poss.items()):
                         why = sweep_due(p, now)
+                        if why is None and p.get("dump"):
+                            why = "dump"  # vendor tape flagged the dump
                         if why is None:
                             _lp = p.get("last_px", 0.0) * p["qty_tokens"]
                             log.info("SHADOW hold %s rr=%.3f peak=%.5f age=%.0fs",
