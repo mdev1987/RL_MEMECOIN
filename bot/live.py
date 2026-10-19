@@ -9,7 +9,9 @@ Three modes, same decision code:
 Live guards (all fail-closed, checked before AND after signing):
 - kill file (data/LIVE_KILL) or LIVE_TRADING!=1 -> refuse.
 - size cap (LIVE_MAX_SOL, default 0.01).
-- price impact cap (LIVE_MAX_IMPACT_PCT, default 5.0).
+- price sanity lives in the callers' preflight: tape-vs-venue deviation
+  and immediate round-trip cost (the old /order priceImpact cap is
+  retired — the field is noise at mint birth; run82 postmortem).
 - min-out: outAmount >= otherAmountThreshold else refuse.
 - no gasless: signatureFeePayer must equal taker.
 - fee cap: prioritizationFeeLamports <= LIVE_MAX_PRIO_LAMPORTS (default 100_000).
@@ -242,22 +244,18 @@ def get_order(input_mint: str, output_mint: str, amount_base: int,
     return o
 
 
-def check_guards(o: dict, taker: str, max_sol: float,
-                 is_exit: bool = False) -> tuple[bool, str]:
+def check_guards(o: dict, taker: str, max_sol: float) -> tuple[bool, str]:
     """Pre-sign policy checks. Returns (ok, reason). Fail-closed.
 
-    is_exit=True relaxes the impact cap (LIVE_EXIT_MAX_IMPACT_PCT,
-    default 100): refusing to sign a sell because the quote looks bad
-    leaves capital stuck in a dying mint — worse than exiting badly.
-    The venue-side slippage cap still bounds the execution price.
+    The /order `priceImpact` field is deliberately NOT capped: at mint
+    birth it is noise (run82: -100..+55.8 on fills that matched the tape
+    within 1.6 %; a 5 % cap would have blocked 14/20 gates, including
+    both +60 % takes and the worst rug). Entry price sanity lives in the
+    callers' preflight instead: tape-vs-venue deviation and immediate
+    round-trip cost. Sells are never blocked by quote quality — refusing
+    to sign a sell leaves capital stuck; the slippage cap bounds fills.
     """
     try:
-        impact = float(o.get("priceImpact") or 0.0)  # percentage points
-        icap = float(os.environ.get(
-            "LIVE_EXIT_MAX_IMPACT_PCT" if is_exit else "LIVE_MAX_IMPACT_PCT",
-            "100.0" if is_exit else "5.0"))
-        if abs(impact) > icap:
-            return False, f"impact {impact:.2f}% over cap"
         if int(o.get("outAmount", "0")) < int(o.get("otherAmountThreshold", "0")):
             return False, "outAmount below min-out threshold"
         sfp = o.get("signatureFeePayer")
@@ -364,7 +362,7 @@ def place_order(input_mint: str, output_mint: str, amount_base: int,
     tip = int(os.environ.get("LIVE_JITO_TIP_LAMPORTS", "0") or 0)
     o = get_order(input_mint, output_mint, amount_base, taker, slippage, tip,
                   critical=is_exit)
-    ok, why = check_guards(o, taker, max_sol, is_exit=is_exit)
+    ok, why = check_guards(o, taker, max_sol)
     if not ok and why.startswith("no transaction"):
         # Venue returned a route but no executable tx (usually the
         # slippage cap is too tight for the book). Exits retry once wider,
@@ -378,7 +376,7 @@ def place_order(input_mint: str, output_mint: str, amount_base: int,
             # our own throttle must never turn it into "throttled".
             o = get_order(input_mint, output_mint, amount_base, taker,
                           wide, tip, critical=True)
-            ok, why = check_guards(o, taker, max_sol, is_exit=is_exit)
+            ok, why = check_guards(o, taker, max_sol)
         if (not ok and why.startswith("no transaction")
                 and "insufficient funds" in why.lower() and not shadow):
             # The real token balance can differ from the quoted amount
@@ -388,7 +386,7 @@ def place_order(input_mint: str, output_mint: str, amount_base: int,
             if 0 < shaved != amount_base:
                 o = get_order(input_mint, output_mint, shaved, taker,
                               wide, tip, critical=True)
-                ok, why = check_guards(o, taker, max_sol, is_exit=is_exit)
+                ok, why = check_guards(o, taker, max_sol)
         if not ok and why.startswith("no transaction"):
             raise NoQuote(f"no executable tx: {why}")
     if not ok:

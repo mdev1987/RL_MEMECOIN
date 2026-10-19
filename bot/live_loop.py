@@ -32,8 +32,8 @@ load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=True)
 from bot.replay_eval import load_paths
 from bot.wallet import Wallet
 from bot.ledger import append as ledger_append, row as ledger_row
-from bot.jup import (order_quote, price_diverges, token_decimals, SOL,
-                     LAMPORTS)
+from bot.jup import (order_quote, price_deviation, roundtrip_cost_pct,
+                     token_decimals, SOL, LAMPORTS)
 from bot import live as L
 from bot import signals as S
 from notifier import get_notifier
@@ -58,6 +58,12 @@ MAXOPEN = int(os.environ.get("LIVE_MAXOPEN", "2"))
 TP, SL, TRAIL = S.TAKE_PROFIT, S.STOP_LOSS, S.TRAILING
 TIME_S = S.TIME_S
 STALE_S = 600.0
+# Entry data-quality guards (run82 postmortem): the retired /order
+# priceImpact cap was uncorrelated with outcome. Deviation catches a
+# stale/mis-scaled tape; round trip catches pools where an immediate
+# exit would already gap through the stop.
+MAX_DEVIATION = float(os.environ.get("LIVE_MAX_DEVIATION_PCT", "5.0")) / 100.0
+MAX_ROUNDTRIP = float(os.environ.get("LIVE_MAX_ROUNDTRIP_PCT", "8.0"))
 LEDGER = os.environ.get("LEDGER_PATH", str(REPO / "data" / "live_decisions.jsonl"))
 POSITIONS = str(REPO / "data" / "live_positions.json")
 WALLET = str(REPO / "data" / "live_wallet.json")
@@ -314,10 +320,25 @@ def main(require_live_flag: bool = True) -> None:
                 except Exception:
                     skip["live:no-quote"] += 1
                     continue
-                if price_diverges(tape_px, vpx):
-                    skip["live:ghost"] += 1
-                    log.warning("LIVE entry ghost %s tape_px=%s venue_px=%s "
-                                "(skipped)", mint[:8], tape_px, vpx)
+                dev = price_deviation(tape_px, vpx)
+                if dev > MAX_DEVIATION:
+                    skip["live:deviation"] += 1
+                    log.warning(
+                        "LIVE entry deviation %s tape_px=%s venue_px=%s "
+                        "dev=%.1f%% (skipped)", mint[:8], tape_px, vpx,
+                        dev * 100.0)
+                    continue
+                rt, rt_why = roundtrip_cost_pct(
+                    mint, int(pq["outAmount"]), SIZE_SOL)
+                if rt is None:
+                    skip["live:thin"] += 1
+                    log.info("LIVE entry thin %s: no sell quote (%s)",
+                             mint[:8], rt_why)
+                    continue
+                if rt < -MAX_ROUNDTRIP:
+                    skip["live:thin"] += 1
+                    log.info("LIVE entry thin %s rt=%.1f%% < -%.1f%% "
+                             "(skipped)", mint[:8], rt, MAX_ROUNDTRIP)
                     continue
                 try:
                     rc = L.place_order(SOL, mint,

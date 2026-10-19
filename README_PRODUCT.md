@@ -307,9 +307,8 @@ SOL-quoted only, fills at read-only Jupiter round-trip quotes, size
 - **The legacy 5 % `priceImpact` cap would block 14/20 gates** —
   both +60 % takes (−16.6, −75.3) and the worst rug (−22.3) included.
   The field is uncorrelated with outcome at birth: replace it with a
-  vpx-vs-tape / round-trip-cost check, do not tune it. Shadow ran at
-  `LIVE_MAX_IMPACT_PCT=100`; live/dust still default to 5 % until the
-  replacement lands.
+  vpx-vs-tape / round-trip-cost check, do not tune it. Removed
+  2026-10-19 — see the guard section below.
 - No trade reached the 1 h TIME rail (max hold 25 min, median 23 s) —
   TIME is untested live.
 - **Verdict: not profitable in realtime at this sample.** The take
@@ -322,3 +321,37 @@ SOL-quoted only, fills at read-only Jupiter round-trip quotes, size
   at the bar minimum and overstates the take hit rate (22.6 % vs
   10 %). Replay is background only; realtime shadow is the verdict.
   Curve: `data/shadow_run82_curve.tsv`.
+
+### 2026-10-19 — run82 fixes (entry quality, venue exits, liveness)
+
+Implemented after the run82 verdict, before run83:
+
+- **`priceImpact` cap retired** (`live.check_guards`). It would have
+  blocked 14/20 run82 gates with no outcome correlation. Entry price
+  sanity is measured directly instead:
+  - **deviation guard** — `|tape_px/venue_px − 1| ≤
+    LIVE_MAX_DEVIATION_PCT` (default 5 %). Run82 gates were 1.2–1.6 %;
+    the one 17.4 % stale-tape entry stopped out −20 % in 3 s.
+  - **round-trip guard** — after the buy preflight quote, immediately
+    quote the sell side for the same base amount; skip when sell-back
+    costs more than `LIVE_MAX_ROUNDTRIP_PCT` (default 8 %) or has no
+    route. Pools where an immediate exit already gaps through the stop
+    are exactly the run82 stop bucket (11 stops, −20 % avg). Both
+    values are logged on every gate (`dev=… rt=…`).
+- **Venue-confirmed shadow exits.** Stop/trail/take triggers are
+  re-evaluated on the executable sell quote (`venue_exit_reason`); a
+  tape print the venue does not corroborate is vetoed (5 s cooldown).
+  Time-based exits (TIME/STALE) are never vetoed. Two run82 "stops"
+  filled at −2.7 %/−3.5 % on tape blips while the venue was fine.
+  Live exits already mark to venue quotes, so both modes now share the
+  same executable-reality exit semantics.
+- **Heartbeat + silence watchdog.** Every 5 min:
+  `SHADOW heartbeat prints=… creates=… gates=… buys=… open=… uptime=…`;
+  warn at 60 s without a frame, end the run at 10 min (a half-open
+  socket must not fake a 24 h run). Tunables: `SHADOW_HEARTBEAT_S`,
+  `SHADOW_SILENT_WARN_S`, `SHADOW_SILENT_EXIT_S`.
+- Tests: 76/76 (deviation, round-trip cost, venue confirmation, and
+  the retired impact cap).
+
+Environment defaults for run83/dust: `LIVE_MAX_DEVIATION_PCT=5`,
+`LIVE_MAX_ROUNDTRIP_PCT=8`; `LIVE_MAX_IMPACT_PCT` is no longer read.

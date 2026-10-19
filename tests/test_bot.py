@@ -452,6 +452,39 @@ def test_jup_price_diverges():
     assert price_diverges(1.0, 0.0)
 
 
+def test_jup_price_deviation_guard():
+    # run82: normal gate deviation was 1.2-1.6 %; one stale-tape entry
+    # (tape 17.4 % above venue) stopped out -20 % in 3 s. The guard is
+    # symmetric and must stay far below the legacy 3x ghost band.
+    from bot.jup import price_deviation
+    assert price_deviation(1.0, 1.0) == 0.0
+    assert 0.015 < price_deviation(1.016, 1.0) < 0.017
+    assert 0.015 < price_deviation(1.0, 1.016) < 0.017
+    assert price_deviation(0.0, 1.0) == float("inf")
+    assert price_deviation(1.0, 0.0) == float("inf")
+    assert price_deviation(1.174, 1.0) > 0.05
+
+
+def test_jup_roundtrip_cost_pct():
+    # thin-pool entry guard: immediate sell-back of the quoted buy.
+    from unittest.mock import patch
+    from bot import jup
+    with patch("bot.jup.order_quote_ex",
+               return_value=({"outAmount": "9800000"}, "")):
+        cost, why = jup.roundtrip_cost_pct("M", 10 ** 9, 0.01)
+        assert abs(cost + 2.0) < 1e-9 and not why
+    with patch("bot.jup.order_quote_ex",
+               return_value=({"outAmount": "9000000"}, "")):
+        cost, _ = jup.roundtrip_cost_pct("M", 10 ** 9, 0.01)
+        assert abs(cost + 10.0) < 1e-9
+    with patch("bot.jup.order_quote_ex",
+               return_value=(None, "order HTTP 400: no route")):
+        cost, why = jup.roundtrip_cost_pct("M", 10 ** 9, 0.01)
+        assert cost is None and "400" in why
+    cost, why = jup.roundtrip_cost_pct("M", 0, 0.01)
+    assert cost is None and why == "bad amount"
+
+
 def test_live_shadow_paths_isolated():
     from bot.live_loop import shadow_paths
     w, p, l = shadow_paths("data/live_wallet.json",
@@ -523,12 +556,12 @@ def test_live_guards():
     from bot import live
     ok, why = live.check_guards(_live_order(), "TAKER", 1.0)
     assert ok, why
-    ok, why = live.check_guards(_live_order(priceImpact="-6.0"), "TAKER", 1.0)
-    assert not ok and "impact" in why, why
-    # exits are never blocked by the entry impact cap: refusing to sign a
-    # sell leaves capital stuck (seen live: -16% impact on a stuck exit).
-    ok, why = live.check_guards(_live_order(priceImpact="-16.0"), "TAKER",
-                                1.0, is_exit=True)
+    # run82: /order priceImpact is noise at mint birth (-100..+55.8 on
+    # fills matching tape within 1.6 %); it must never block a trade.
+    # Entry price sanity is the callers' deviation + round-trip guard.
+    ok, why = live.check_guards(_live_order(priceImpact="-100.0"), "TAKER", 1.0)
+    assert ok, why
+    ok, why = live.check_guards(_live_order(priceImpact="55.8"), "TAKER", 1.0)
     assert ok, why
     ok, why = live.check_guards(
         _live_order(outAmount="7000000"), "TAKER", 1.0)
@@ -942,6 +975,23 @@ def test_shadow_quote_fill_helpers():
     assert quote_failure_kind("order HTTP 429: too many") == "ours"
     assert quote_failure_kind("order HTTP 503: nope") == "ours"
     assert quote_failure_kind("mystery") == "other"
+
+
+def test_shadow_venue_exit_confirmation():
+    # run82: 11 stops averaged -20 % while two "stops" filled at -2.7 %
+    # /-3.5 % on tape blips the venue never confirmed. Shadow now
+    # re-evaluates stop/trail/take on the executable quote; time-based
+    # exits are never vetoed.
+    from bot.shadow_loop import venue_exit_reason
+    assert venue_exit_reason("stop", 0.01, 0.01, 0.0085, 10) == "stop"
+    assert venue_exit_reason("stop", 0.01, 0.01, 0.0095, 10) is None
+    assert venue_exit_reason("take", 0.01, 0.017, 0.0165, 10) == "take"
+    assert venue_exit_reason("take", 0.01, 0.017, 0.0155, 10) is None
+    # tape blip below the trail line, venue still healthy -> hold
+    assert venue_exit_reason("trail", 0.01, 0.012, 0.0105, 10) is None
+    assert venue_exit_reason("trail", 0.01, 0.012, 0.0090, 10) == "trail"
+    assert venue_exit_reason("hold-end", 0.01, 0.01, 0.005, 3700) == "hold-end"
+    assert venue_exit_reason("stale", 0.01, 0.01, 0.005, 900) == "stale"
 
 
 def test_shadow_tape_birth_anchor():

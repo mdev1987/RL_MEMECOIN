@@ -138,3 +138,37 @@ def price_diverges(tape_px: float, venue_px: float,
     if tape_px <= 0 or venue_px <= 0:
         return True
     return tape_px > factor * venue_px or tape_px < venue_px / factor
+
+
+def price_deviation(tape_px: float, venue_px: float) -> float:
+    """Relative distance between tape and venue price (0.0 = agreement).
+
+    Symmetric entry data-quality guard. Run82: normal quote-vs-print
+    drift was 1.2-1.6 %; the one stale-tape entry (tape 17.4 % above
+    the venue) stopped out 20 % in 3 s. inf on non-positive prices.
+    """
+    if tape_px <= 0 or venue_px <= 0:
+        return float("inf")
+    return abs(tape_px / venue_px - 1.0)
+
+
+def roundtrip_cost_pct(mint: str, qty_base: int, size_sol: float,
+                       timeout: float = 10.0) -> tuple[float | None, str]:
+    """Immediate sell-back cost of a just-quoted buy, in % of size.
+
+    Thin-pool entry guard: quote the sell side for the exact base amount
+    the entry quote would deliver. Healthy fresh pools cost ~2-3 %
+    round trip; pools whose exit would already gap far beyond the 12 %
+    stop (run82: 11 stops averaged -20 %) are not worth entering.
+    Returns (cost_pct, failure); cost_pct is None when unquotable.
+    """
+    if qty_base <= 0 or size_sol <= 0:
+        return None, "bad amount"
+    q, why = order_quote_ex(mint, SOL, qty_base, timeout=timeout)
+    if not q or not q.get("outAmount"):
+        return None, why or "no sell route"
+    try:
+        out = int(q["outAmount"]) / LAMPORTS
+    except Exception as exc:
+        return None, f"bad outAmount: {exc}"
+    return (out / size_sol - 1.0) * 100.0, ""

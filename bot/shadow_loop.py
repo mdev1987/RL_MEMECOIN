@@ -36,8 +36,8 @@ load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=True)
 from bot.replay_eval import is_pump_pool
 from bot.wallet import Wallet
 from bot.ledger import append as ledger_append, row as ledger_row
-from bot.jup import (order_quote, order_quote_ex, price_diverges,
-                     token_decimals, SOL, LAMPORTS)
+from bot.jup import (order_quote, order_quote_ex, price_deviation,
+                     roundtrip_cost_pct, token_decimals, SOL, LAMPORTS)
 from bot import live as L
 from bot import signals as S
 from notifier import get_notifier
@@ -53,6 +53,24 @@ SIZE_SOL = float(os.environ.get("SHADOW_SIZE_SOL", "0.01"))
 # keep the default at dust scale so signals never trip the cap.
 MAXOPEN = int(os.environ.get("SHADOW_MAXOPEN", "2"))
 ENTRY_N = 11  # need entry_lookback+1 buys before the gate can run
+# Entry data-quality guards (run82 postmortem). The retired /order
+# priceImpact cap was uncorrelated with outcome; these two measure the
+# things that actually cost money on a fresh mint:
+#   deviation: tape print vs venue quote at the gate (normal 1.2-1.6 %,
+#              stale-tape entry 17.4 % -> -20 % in 3 s)
+#   round trip: immediate sell-back cost of the quoted buy (thin pools
+#              are exactly the ones whose stops gap through -12 %)
+MAX_DEVIATION = float(os.environ.get("LIVE_MAX_DEVIATION_PCT", "5.0")) / 100.0
+MAX_ROUNDTRIP = float(os.environ.get("LIVE_MAX_ROUNDTRIP_PCT", "8.0"))
+# A tape trigger the venue does not corroborate is vetoed; cool down so
+# one persistently mis-scaled tape cannot storm the quote API.
+VETO_COOL_S = float(os.environ.get("SHADOW_VETO_COOL_S", "5.0"))
+# Liveness: run82 had no heartbeat, so a dead stream looked like a quiet
+# market. Log counters every 5 min; warn at 60 s of total silence and
+# fail the run at 10 min (a half-open socket must not fake a 24 h run).
+HEARTBEAT_S = float(os.environ.get("SHADOW_HEARTBEAT_S", "300"))
+SILENT_WARN_S = float(os.environ.get("SHADOW_SILENT_WARN_S", "60"))
+SILENT_EXIT_S = float(os.environ.get("SHADOW_SILENT_EXIT_S", "600"))
 PRUNE_S = 60.0
 IDLE_DROP_S = 1800.0
 MAX_MINTS = 5000
@@ -92,6 +110,22 @@ def quote_fill_sol(q: dict | None) -> float | None:
 OURS_MARKERS = ("order error", "HTTP 401", "HTTP 403", "HTTP 429",
                 "HTTP 500", "HTTP 502", "HTTP 503", "HTTP 504")
 VENUE_MARKERS = ("HTTP 400", "no quote")
+
+
+def venue_exit_reason(why: str, size: float, peak: float, fill: float,
+                      age_s: float) -> str | None:
+    """Venue-confirmed exit: the executable quote has the final say.
+
+    Shadow marks are tape prints, but a sell only ever gets the venue
+    quote (run82: two tape-blip "stops" filled at -2.7 %/-3.5 % while
+    the venue was fine). Re-evaluate stop/trail/take on the quote that
+    would actually fill; time-based exits (hold-end/stale/rug) are not
+    price triggers and are never vetoed. Returns the reason to book, or
+    None to keep holding.
+    """
+    if why not in ("stop", "trail", "take"):
+        return why
+    return S.decide_exit(size, peak, fill, age_s)
 
 
 def quote_failure_kind(qerr: str) -> str:
@@ -240,13 +274,36 @@ def main() -> None:
 
     async def run():
         nonlocal last_prune, last_full_warn
+        t0 = time.time()
+        hb_t = t0
+        last_msg = t0
+        silent_warned = False
+        st = {"prints": 0, "creates": 0, "gates": 0, "buys": 0}
         async with websockets.connect(URL, max_size=50_000_000) as ws:
             log.info("shadow stream connected")
             while time.time() < t_end:
+                now = time.time()
+                if now - hb_t >= HEARTBEAT_S:
+                    hb_t = now
+                    log.info("SHADOW heartbeat prints=%d creates=%d gates=%d "
+                             "buys=%d open=%d mints=%d uptime=%.1fh",
+                             st["prints"], st["creates"], st["gates"],
+                             st["buys"], len(poss), len(mints),
+                             (now - t0) / 3600.0)
+                silent = now - last_msg
+                if silent > SILENT_EXIT_S:
+                    raise RuntimeError(
+                        f"stream silent for {silent:.0f}s (no frames) — "
+                        "half-open socket, ending run")
+                if silent > SILENT_WARN_S and not silent_warned:
+                    silent_warned = True
+                    log.warning("SHADOW stream silent for %.0fs", silent)
                 try:
                     raw = await asyncio.wait_for(ws.recv(), timeout=2.0)
                 except asyncio.TimeoutError:
                     continue
+                last_msg = time.time()
+                silent_warned = False
                 try:
                     e = json.loads(raw)
                 except Exception:
@@ -258,6 +315,7 @@ def main() -> None:
                     if tradable_event(e):
                         creates[m] = int(e.get("timestamp")
                                          or int(time.time() * 1000))
+                        st["creates"] += 1
                     continue
                 if act not in ("buy", "sell") or not m:
                     continue
@@ -268,6 +326,7 @@ def main() -> None:
                     continue
                 px = float(px)
                 ts = int(e.get("timestamp") or int(time.time() * 1000))
+                st["prints"] += 1
                 t = mints.get(m)
                 if t is None:
                     if not tape_should_start(m, creates, taped):
@@ -329,6 +388,8 @@ def main() -> None:
                         continue
                     if time.time() < p.get("cool_until", 0.0):
                         continue  # backing off after a venue miss
+                    if time.time() < p.get("veto_until", 0.0):
+                        continue  # venue vetoed this tape trigger recently
                     # Shadow exits are quote-fills: the wallet never took
                     # delivery of the tokens (signed-never-sent), so a sell
                     # build can only fail with "Insufficient funds" — seen
@@ -340,6 +401,20 @@ def main() -> None:
                     q, qerr = order_quote_ex(m, SOL, p["qty_base"])
                     fill = quote_fill_sol(q)
                     if fill:
+                        vwhy = venue_exit_reason(
+                            why, p["size"], p.get("peak", 0.0), fill,
+                            time.time() - p["t"])
+                        if vwhy is None:
+                            p["veto_until"] = time.time() + VETO_COOL_S
+                            p["vetoes"] = p.get("vetoes", 0) + 1
+                            if p["vetoes"] <= 3:
+                                log.info(
+                                    "SHADOW exit veto %s tape=%s rr=%.3f "
+                                    "venue_rr=%.3f (venue disagrees)",
+                                    m[:8], why, mark / p["size"],
+                                    fill / p["size"])
+                            continue
+                        why = vwhy
                         p.pop("cool_until", None)
                         p["misses"] = 0
                         log.info("SHADOW exit fill %s out=%.6f SOL",
@@ -388,18 +463,38 @@ def main() -> None:
                     if not pq or not pq.get("outAmount"):
                         log.info("SHADOW entry preflight no-quote %s", m[:8])
                         continue  # unquotable now: same as NoQuote below
+                    tape_px = t["prices"][ENTRY_N - 1]
                     try:
                         vpx = SIZE_SOL / (int(pq["outAmount"]) / (10 ** dec))
                     except Exception:
                         continue
-                    log.info("SHADOW gate %s vpx=%.3g tape_px=%.3g "
-                             "impact=%s route=%s", m[:8], vpx,
-                             t["prices"][ENTRY_N - 1], pq.get("priceImpact"),
-                             pq.get("route"))
-                    if price_diverges(t["prices"][ENTRY_N - 1], vpx):
+                    dev = price_deviation(tape_px, vpx)
+                    rt = None
+                    rt_why = "deviation"
+                    if dev <= MAX_DEVIATION:
+                        rt, rt_why = roundtrip_cost_pct(
+                            m, int(pq["outAmount"]), SIZE_SOL)
+                    st["gates"] += 1
+                    log.info(
+                        "SHADOW gate %s vpx=%.3g tape_px=%.3g dev=%.1f%% "
+                        "rt=%s impact=%s route=%s", m[:8], vpx, tape_px,
+                        dev * 100.0,
+                        f"{rt:.1f}%" if rt is not None else "n/a",
+                        pq.get("priceImpact"), pq.get("route"))
+                    if dev > MAX_DEVIATION:
                         log.warning(
-                            "SHADOW entry ghost %s tape_px=%s venue_px=%s "
-                            "(skipped)", m[:8], t["prices"][ENTRY_N - 1], vpx)
+                            "SHADOW entry deviation %s tape_px=%.3g "
+                            "venue_px=%.3g dev=%.1f%% > %.1f%% (skipped)",
+                            m[:8], tape_px, vpx, dev * 100.0,
+                            MAX_DEVIATION * 100.0)
+                        continue
+                    if rt is None:
+                        log.info("SHADOW entry thin %s: no sell quote (%s)",
+                                 m[:8], rt_why)
+                        continue
+                    if rt < -MAX_ROUNDTRIP:
+                        log.info("SHADOW entry thin %s rt=%.1f%% < -%.1f%% "
+                                 "(skipped)", m[:8], rt, MAX_ROUNDTRIP)
                         continue
                     try:
                         rc = L.place_order(
@@ -430,6 +525,7 @@ def main() -> None:
                                "entry_px": t["prices"][ENTRY_N - 1],
                                "entry_vpx": vpx,
                                "peak": 0.0, "sig": rc.signature}
+                    st["buys"] += 1
                     ntf.send_open(
                         ca=m, name=m[:12], price=t["prices"][ENTRY_N - 1],
                         size_sol=SIZE_SOL, balance_before=w.s.balance,
