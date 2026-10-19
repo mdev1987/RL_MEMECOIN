@@ -79,13 +79,15 @@ Key lives in `.env.signer` (600, gitignored); paper daemons never load it.
 All replay/OOS commands run offline (no Jupiter key needed):
 
 ```
-.venv/bin/python -m tests                                # 71 tests
+.venv/bin/python -m tests                                # 76 tests
 curl -sSLo /tmp/h.jsonl.zst https://replay.pumpapi.io/2026/10/17/05.jsonl.zst
 OOS_MAX_LINES=1200000 OOS_TAG=oct17_h05 \
   .venv/bin/python -m eval.fresh_oos_run /tmp/h.jsonl.zst
 .venv/bin/python -m eval.merge_oos_results out.json eval/results_oos_fresh17_1200000.json ...
-.venv/bin/python -m bot.shadow_loop --secs 4500          # live-stream shadow
-.venv/bin/python -m eval.shadow_report data/shadow_runNN.log
+# 24-48 h realtime shadow, supervised (durable evidence log):
+oxmgr start --name meme-shadow --restart never --cwd "$PWD" \
+  --env SHADOW_RUN=83 --env SHADOW_SECS=172800 scripts/shadow_run.sh
+.venv/bin/python -m eval.shadow_report data/shadow_run83.log
 # parity soak (isolated *_shadow.* state, replay key):
 SHADOW=1 LIVE_TRADING=1 LIVE_CONFIRM=YES REPLAY_PATHS=... \
   timeout 2400 .venv/bin/python -m bot.live_loop --live
