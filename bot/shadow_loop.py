@@ -384,8 +384,10 @@ def main() -> None:
             ca=mint, name=mint[:12],
             reason="TP" if why == "take" else ("STOP" if why == "stop"
                     else ("TRAIL" if why == "trail"
-                          else ("DUMP" if why == "dump"
-                                else ("RUG" if why == "rug" else "TIME")))),
+                          else ("BE" if why == "be"
+                                else ("DUMP" if why == "dump"
+                                      else ("RUG" if why == "rug"
+                                            else "TIME"))))),
             mult=mark / p["size"] if p["size"] > 0 else 1.0,
             pnl_sol=pnl, hold_s=time.time() - p["t"],
             entry_px=p.get("entry_px"), exit_px=mark, size_sol=p["size"],
@@ -783,11 +785,14 @@ def main() -> None:
                     # flow-independent exits: dead mints get no prints, so
                     # TIME/STALE must fire here or positions sit forever.
                     for mk, p in list(poss.items()):
+                        _lp = p.get("last_px", 0.0) * p["qty_tokens"]
                         why = sweep_due(p, now)
                         if why is None and p.get("dump"):
                             why = "dump"  # vendor tape flagged the dump
+                        if why is None and profit_lock_due(
+                                p["size"], p.get("peak", 0.0), _lp):
+                            why = "be"  # quiet mint: lock in the gain
                         if why is None:
-                            _lp = p.get("last_px", 0.0) * p["qty_tokens"]
                             log.info("SHADOW hold %s rr=%.3f peak=%.5f age=%.0fs",
                                      mk[:8], _lp / p["size"] if p["size"] else 0,
                                      p.get("peak", 0.0), now - p["t"])
