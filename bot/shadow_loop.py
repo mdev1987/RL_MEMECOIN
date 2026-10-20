@@ -74,6 +74,19 @@ VETO_COOL_S = float(os.environ.get("SHADOW_VETO_COOL_S", "5.0"))
 # SHADOW_DUMP_EXIT_DD loss) before anything is booked.
 SP_ENABLED = SP.enabled()
 DUMP_DD = float(os.environ.get("SHADOW_DUMP_EXIT_DD", "0.05"))
+# Extreme vendor dump evidence: still venue-confirmed, but corroborate at
+# a shallower loss and re-quote sooner (run84 uxTBskk6 lost 25 % while the
+# venue quote lagged the tape dump by ~10 s).
+DUMP_URGENT_DD = float(os.environ.get("SHADOW_DUMP_URGENT_DD", "0.03"))
+DUMP_VETO_COOL_S = float(os.environ.get("SHADOW_DUMP_VETO_COOL_S", "1.0"))
+# The vendor REST tape indexes ~2-3 s behind the live second (measured
+# 2026-10-20: newest row aged 1.6-3.9 s on a hot mint). At the gate the
+# check used to read 0-3 rows while 20+ existed for that second, so the
+# entry guard failed open on exactly the dump entries it was fitted to
+# block. Wait for the tape to reach the gate second (bounded).
+SP_SETTLE_S = float(os.environ.get("SP_GATE_SETTLE_S", "4.0"))
+SP_SETTLE_POLL_S = float(os.environ.get("SP_GATE_SETTLE_POLL_S", "0.4"))
+SP_TAPE_STALE_S = float(os.environ.get("SP_GATE_STALE_S", "10.0"))
 # Liveness: run82 had no heartbeat, so a dead stream looked like a quiet
 # market. Log counters every 5 min; warn at 60 s of total silence and
 # fail the run at 10 min (a half-open socket must not fake a 24 h run).
@@ -122,7 +135,7 @@ VENUE_MARKERS = ("HTTP 400", "no quote")
 
 
 def venue_exit_reason(why: str, size: float, peak: float, fill: float,
-                      age_s: float) -> str | None:
+                      age_s: float, urgent: bool = False) -> str | None:
     """Venue-confirmed exit: the executable quote has the final say.
 
     Shadow marks are tape prints, but a sell only ever gets the venue
@@ -134,8 +147,12 @@ def venue_exit_reason(why: str, size: float, peak: float, fill: float,
     """
     if why == "dump":
         # the vendor tape flagged an active dump while holding; the venue
-        # quote must corroborate a material loss or we keep holding
-        return "dump" if fill <= size * (1.0 - DUMP_DD) else None
+        # quote must corroborate a material loss or we keep holding.
+        # Extreme tape evidence (>= urgent_mult x the trigger) corroborates
+        # at a shallower loss: run84 uxTBskk6's venue quote sat at 1.01
+        # for 10 s after a 4.4 %-of-mcap sell, then gapped to 0.747.
+        dd = DUMP_URGENT_DD if urgent else DUMP_DD
+        return "dump" if fill <= size * (1.0 - dd) else None
     if why not in ("stop", "trail", "take"):
         return why
     return S.decide_exit(size, peak, fill, age_s)
@@ -230,19 +247,56 @@ def push_print(t: dict, px: float, act: str, liq: float,
     return False
 
 
-def sp_gate_check(mint: str, birth_ms: int) -> tuple[bool, str, dict]:
+def tape_newest(tape: list[dict] | None) -> float:
+    """Newest vendor swap timestamp (epoch s), 0 when empty."""
+    now = time.time()
+    return max((SP.swap_ts(v, now) for v in (tape or [])), default=0.0)
+
+
+def sp_gate_check(mint: str, birth_ms: int,
+                  gate_ts: float | None = None) -> tuple[bool, str, dict]:
     """solpump.io gate: tape flow + safety + dev history (fail-open).
 
     Called at every v3 signal through asyncio.to_thread (requests is
     synchronous). Pulls the vendor tape back to the mint's birth anchor,
-    computes flow features as of now, then checks the unambiguous
-    contract hazards. A missing tape/safety/dev (vendor down, brand-new
-    mint) never blocks: v3 still decides.
+    computes flow features as of the gate second, then checks the
+    unambiguous contract hazards. A missing tape/safety/dev (vendor down,
+    brand-new mint) never blocks: v3 still decides.
+
+    The vendor REST tape indexes ~2-3 s behind the live second, so a
+    gate-time read used to see 0-3 rows while 20+ existed for that same
+    second (run84: every one of the 4 buys had n<=3, and the guard was
+    silent; uxTBskk6's 5.98 SOL dump sell was stamped in the gate second
+    but invisible). Wait for the tape to reach the gate second (bounded),
+    then evaluate at the vendor's newest timestamp instead of wall now —
+    otherwise the lag leaves the final 1 s window empty and the dump is
+    invisible again.
     """
-    floor = (birth_ms / 1000.0) - 5.0 if birth_ms else time.time() - 120.0
-    tape = SP.swaps_since(mint, floor, max_pages=4)
-    feat = SPG.flow_features(tape, time.time())
-    ok, why = SPG.entry_flow_guard(feat)
+    gate_ts = gate_ts or time.time()
+    floor = (birth_ms / 1000.0) - 5.0 if birth_ms else gate_ts - 120.0
+    tape = SP.swaps_since(mint, floor, max_pages=4) or []
+    cfg = SPG.flow_cfg()
+    t0 = time.time()
+    newest = tape_newest(tape)
+    if cfg.enabled and SP_SETTLE_S > 0:
+        while (newest < gate_ts - 0.5
+               and time.time() - t0 < SP_SETTLE_S):
+            time.sleep(SP_SETTLE_POLL_S)
+            more = SP.swaps_since(mint, floor, max_pages=4)
+            if more:
+                tape = more
+            newest = tape_newest(tape)
+    wait_s = round(time.time() - t0, 2)
+    now = time.time()
+    if not newest or newest < gate_ts - SP_TAPE_STALE_S:
+        feat: dict = {"n": 0}  # vendor lagging/absent: no flow opinion
+    else:
+        eval_ts = min(max(gate_ts, newest), now)
+        rows = [v for v in tape if SP.swap_ts(v, now) <= eval_ts]
+        feat = SPG.flow_features(rows, eval_ts)
+    feat["wait_s"] = wait_s
+    feat["tape_age"] = round(now - newest, 2) if newest else None
+    ok, why = SPG.entry_flow_guard(feat, cfg)
     if ok:
         ok, why = SPG.safety_guard(SP.safety(mint))
     if ok:
@@ -339,8 +393,10 @@ def main() -> None:
                     if hit and not p.get("dump"):
                         p["dump"] = True
                         p["dump_why"] = dw
+                        p["dump_urgent"] = SPG.dump_urgency(buf, time.time())
                         st["sp_dumps"] = st.get("sp_dumps", 0) + 1
-                        log.info("SHADOW sp-dump %s %s", parts[2][:8], dw)
+                        log.info("SHADOW sp-dump %s %s%s", parts[2][:8], dw,
+                                 " [urgent]" if p["dump_urgent"] else "")
             elif parts[3] == "price":
                 px = SP.price_from_event(data)
                 if px:
@@ -485,9 +541,12 @@ def main() -> None:
                     if fill:
                         vwhy = venue_exit_reason(
                             why, p["size"], p.get("peak", 0.0), fill,
-                            time.time() - p["t"])
+                            time.time() - p["t"],
+                            urgent=p.get("dump_urgent", False))
                         if vwhy is None:
-                            p["veto_until"] = time.time() + VETO_COOL_S
+                            cool = (DUMP_VETO_COOL_S if why == "dump"
+                                    else VETO_COOL_S)
+                            p["veto_until"] = time.time() + cool
                             p["vetoes"] = p.get("vetoes", 0) + 1
                             if p["vetoes"] <= 3:
                                 log.info(
@@ -540,6 +599,8 @@ def main() -> None:
                     # prints lack. Both run83 gates entered into an active
                     # dump (4-6 SOL SELL prints inside the gate second):
                     # read the vendor tape before spending a venue quote.
+                    # The check waits for the (2-3 s lagging) REST tape to
+                    # reach the gate second — see sp_gate_check.
                     if sp_feed is not None:
                         st["sig"] = st.get("sig", 0) + 1
                         sp_ok, sp_why, sp_feat = await asyncio.to_thread(
@@ -548,23 +609,27 @@ def main() -> None:
                             st["sp_skips"] = st.get("sp_skips", 0) + 1
                             log.info(
                                 "SHADOW sp-block %s: %s (tape n=%s buys=%s "
-                                "sells=%s net3=%.2f s1sells=%.2f buyers=%s)",
+                                "sells=%s net3=%.2f s1sells=%.2f buyers=%s "
+                                "wait=%.1fs)",
                                 m[:8], sp_why, sp_feat.get("n"),
                                 sp_feat.get("n_buys"), sp_feat.get("n_sells"),
                                 sp_feat.get("s3_net", 0.0),
                                 sp_feat.get("s1_sol_sells", 0.0),
-                                sp_feat.get("buyers"))
+                                sp_feat.get("buyers"),
+                                sp_feat.get("wait_s", 0.0))
                             continue
                         log.info(
                             "SHADOW sp-pass %s n=%s buy=%.2f sell=%.2f "
-                            "net3=%.2f s1sells=%.2f buyers=%s outlier=%.2f",
+                            "net3=%.2f s1sells=%.2f buyers=%s outlier=%.2f "
+                            "wait=%.1fs",
                             m[:8], sp_feat.get("n"),
                             sp_feat.get("sol_buys", 0.0),
                             sp_feat.get("sol_sells", 0.0),
                             sp_feat.get("s3_net", 0.0),
                             sp_feat.get("s1_sol_sells", 0.0),
                             sp_feat.get("buyers"),
-                            sp_feat.get("outlier_sell_sol", 0.0))
+                            sp_feat.get("outlier_sell_sol", 0.0),
+                            sp_feat.get("wait_s", 0.0))
                     # data-quality preflight: a read-only venue quote must
                     # broadly agree with the tape price the signal used; a
                     # mis-scaled tape (seen live: 337x) would otherwise buy
@@ -698,9 +763,22 @@ def main() -> None:
                         q, qerr = order_quote_ex(mk, SOL, p["qty_base"])
                         fill = quote_fill_sol(q)
                         if fill:
+                            # same venue confirmation as the per-print path:
+                            # a vendor dump flag alone must not book a
+                            # phantom stop at a quote the venue never offered
+                            vwhy = venue_exit_reason(
+                                why, p["size"], p.get("peak", 0.0), fill,
+                                now - p["t"],
+                                urgent=p.get("dump_urgent", False))
+                            if vwhy is None:
+                                log.info(
+                                    "SHADOW sweep exit veto %s tape=%s "
+                                    "venue_rr=%.3f (venue disagrees)",
+                                    mk[:8], why, fill / p["size"])
+                                continue
                             log.info("SHADOW sweep exit fill out=%.6f SOL",
                                      fill)
-                            close_position(mk, why, fill)
+                            close_position(mk, vwhy, fill)
                             continue
                         kind = quote_failure_kind(qerr)
                         log.info("SHADOW sweep no-quote %s: %s", mk[:8], qerr)

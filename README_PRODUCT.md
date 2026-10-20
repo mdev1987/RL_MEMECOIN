@@ -405,7 +405,9 @@ Tunables (all env): `SP_FLOW_GUARD`, `SP_MIN_TAPE`, `SP_MAX_SELL_1S`,
 `SP_MAX_SELL_3S`, `SP_SELL3_NET_MAX`, `SP_MIN_NET_3S`,
 `SP_MAX_OUTLIER_SOL`, `SP_MIN_BUYERS`, `SP_MAX_DROP_1S/3S`,
 `SP_DUMP_WATCH`, `SP_DUMP_SINGLE_MIN_SOL`, `SP_DUMP_SINGLE_MCAP_FRAC`,
-`SP_DUMP_SUM_SOL`, `SP_DUMP_NET_SOL`, `SHADOW_DUMP_EXIT_DD`.
+`SP_DUMP_SUM_SOL`, `SP_DUMP_NET_SOL`, `SHADOW_DUMP_EXIT_DD`,
+`SHADOW_DUMP_URGENT_DD`, `SHADOW_DUMP_VETO_COOL_S`, `SP_GATE_SETTLE_S`,
+`SP_GATE_SETTLE_POLL_S`, `SP_GATE_STALE_S`, `SP_DUMP_URGENT_MULT`.
 
 Run84 (first run with the data layer):
 
@@ -415,5 +417,47 @@ oxmgr start --name meme-shadow --restart never --cwd "$PWD" \
 .venv/bin/python -m eval.shadow_report data/shadow_run84.log
 ```
 
-Tests: 87/87 (`python -m tests`), including rule-order, no-lookahead,
-paging, fail-open and dump-corroboration cases.
+## Update 2026-10-20 — run84 postmortem: the guard was blind, not wrong
+
+Run84 (18.2 h) produced 15 signals / 14 gates / 4 buys / 4 closes:
+`+0.00176 SOL`, 1W/3L (take +0.00611, stops −0.00381, trail −0.00054).
+Four trades are not a verdict, but the logs exposed two fixable faults.
+
+**1. The vendor REST tape indexes ~2–3 s behind the live second.** At the
+gate it returned 0–3 swaps while 20+ existed for that same second. All
+four buys had `n<=3`, so `SP_MIN_TAPE=5` made the flow guard fail open on
+every trade; the only real block was the safety guard (honeypot). uxTBskk6
+is the proof: a 5.98 SOL sell (4.4 % of a 135 SOL mcap) stamped in the gate
+second was invisible, and the position stopped at −25 %. `sp_gate_check`
+now waits for the tape to reach the gate second (`SP_GATE_SETTLE_S=4 s`,
+poll 0.4 s) and evaluates at the vendor's newest timestamp — evaluating at
+wall now would leave the final 1 s window empty and hide the dump again.
+
+Replaying the run84 gate tapes at +1…+3 s (tape visible): **uxTBskk6 and
+HHNvpnfn are blocked** (both losers: −0.00254, −0.00054); E4y7X9Ls passes
+(its loss came after entry, not from a gate-time dump). The 54X winner's
+gate window is beyond the 4000-swap REST walk, so its counterfactual is
+unknown — a known limitation of the fix.
+
+**2. Venue confirmation can lag a real dump.** uxTBskk6's dump flag fired
+0.6 s after entry, but the venue quote disagreed twice (0.98, 1.01) and
+only gapped to 0.747 by the third check 10 s later. Extreme tape evidence
+(≥ 2× the trigger: `SP_DUMP_URGENT_MULT`) now corroborates at 3 % loss
+(`SHADOW_DUMP_URGENT_DD`) and re-quotes after 1 s
+(`SHADOW_DUMP_VETO_COOL_S`) instead of 5 s. The sweep exit path now
+applies the same venue confirmation; previously a vendor blip could book
+a sweep close with no corroboration at all.
+
+Throughput note: 10 of 14 gates were skipped by the frozen v3 deviation
+filter (`>5 %`), not by solpump; all four gates with dev ≤ 5 % were bought.
+
+Run85 (first run with the settle wait + urgent dump path):
+
+```
+oxmgr start --name meme-shadow --restart never --cwd "$PWD" \
+  --env SHADOW_RUN=85 --env SHADOW_SECS=172800 scripts/shadow_run.sh
+.venv/bin/python -m eval.shadow_report data/shadow_run85.log
+```
+
+Tests: 89/89 (`python -m tests`), including rule-order, no-lookahead,
+paging, fail-open, settle-wait, urgency and dump-corroboration cases.

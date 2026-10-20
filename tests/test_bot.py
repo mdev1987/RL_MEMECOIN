@@ -1524,6 +1524,25 @@ def test_solpump_dump_trigger():
     assert not G.dump_trigger(rec, now)[0]
 
 
+def test_solpump_dump_urgency():
+    from bot import sp_guards as G
+    now = 1_760_000_000.0
+    # 6 SOL against a 200 SOL mcap: trigger 3, urgent bar 6 -> urgent
+    rec = G.recent_from_event([_sp_swap(now - 0.5, "SELL", 6.0, mc=200.0)],
+                              now)
+    assert G.dump_trigger(rec, now)[0] and G.dump_urgency(rec, now)
+    # 3.5 SOL clears the trigger (3) but not the urgent bar (6)
+    rec = G.recent_from_event([_sp_swap(now - 0.5, "SELL", 3.5, mc=200.0)],
+                              now)
+    assert G.dump_trigger(rec, now)[0] and not G.dump_urgency(rec, now)
+    # burst: 6 x 2.2 = 13.2 SOL in the 2 s window -> urgent
+    rec = G.recent_from_event([_sp_swap(now - 1.8 + i * 0.3, "SELL", 2.2,
+                                        mc=200.0) for i in range(6)], now)
+    assert G.dump_trigger(rec, now)[0] and G.dump_urgency(rec, now)
+    # quiet tape -> not urgent
+    assert not G.dump_urgency([], now)
+
+
 def test_solpump_swaps_since_paging():
     from bot import solpump as SP
     orig = SP.swaps
@@ -1632,10 +1651,13 @@ def test_solpump_feed_dispatch():
 def test_shadow_sp_gate_check():
     import time as _t
     from bot import solpump as SP
+    from bot import shadow_loop as SL
     from bot.shadow_loop import sp_gate_check
-    orig = (SP.swaps_since, SP.safety, SP.dev_tokens)
+    orig = (SP.swaps_since, SP.safety, SP.dev_tokens,
+            SL.SP_SETTLE_S, SL.SP_SETTLE_POLL_S)
     now = _t.time()
     try:
+        SL.SP_SETTLE_S, SL.SP_SETTLE_POLL_S = 0.05, 0.01
         clean = [_sp_swap(now - 2 + i * 0.2, "BUY", 0.5, wallet=f"b{i}")
                  for i in range(6)]
         SP.swaps_since = lambda *a, **k: clean
@@ -1655,7 +1677,49 @@ def test_shadow_sp_gate_check():
         ok, why, _ = sp_gate_check("M", int((now - 600) * 1000))
         assert ok
     finally:
-        SP.swaps_since, SP.safety, SP.dev_tokens = orig
+        (SP.swaps_since, SP.safety, SP.dev_tokens,
+         SL.SP_SETTLE_S, SL.SP_SETTLE_POLL_S) = orig
+
+
+def test_shadow_sp_gate_settle_waits_for_lagging_tape():
+    # run84 uxTBskk6: the vendor REST tape indexes ~2-3 s behind the live
+    # second. At the gate it returned 1 swap while 20+ (incl. a 5.98 SOL
+    # sell) existed for that second, so the guard failed open and the
+    # position stopped at -25 %. The gate must wait for the tape to reach
+    # the gate second, then evaluate at the vendor's newest timestamp.
+    import time as _t
+    from bot import solpump as SP
+    from bot import shadow_loop as SL
+    orig = (SP.swaps_since, SP.safety, SP.dev_tokens,
+            SL.SP_SETTLE_S, SL.SP_SETTLE_POLL_S)
+    gate = _t.time()
+    try:
+        SL.SP_SETTLE_S, SL.SP_SETTLE_POLL_S = 1.0, 0.01
+        full = [_sp_swap(gate - 4 + i * 0.3, "BUY", 0.5, wallet=f"b{i}")
+                for i in range(6)]
+        full.append(_sp_swap(gate, "SELL", 6.0, wallet="dumper"))
+        reads = {"n": 0}
+
+        def lagging(*a, **k):
+            reads["n"] += 1
+            # first two reads only reach the pre-gate seconds
+            return full[:-1] if reads["n"] <= 2 else full
+
+        SP.swaps_since = lagging
+        SP.safety = lambda *a, **k: None
+        SP.dev_tokens = lambda *a, **k: None
+        ok, why, feat = SL.sp_gate_check("M", int((gate - 600) * 1000))
+        assert not ok and ("sell" in why or "net" in why), why
+        assert reads["n"] >= 3          # it kept polling
+        assert feat["wait_s"] > 0
+        # tape older than the stale cap -> no flow opinion (fail-open)
+        SP.swaps_since = lambda *a, **k: [
+            _sp_swap(gate - 60, "SELL", 9.0, wallet="d")]
+        ok, why, feat = SL.sp_gate_check("M", int((gate - 600) * 1000))
+        assert ok and feat["n"] == 0, (ok, feat)
+    finally:
+        (SP.swaps_since, SP.safety, SP.dev_tokens,
+         SL.SP_SETTLE_S, SL.SP_SETTLE_POLL_S) = orig
 
 
 def test_shadow_dump_exit_needs_venue_loss():
@@ -1665,6 +1729,13 @@ def test_shadow_dump_exit_needs_venue_loss():
     assert venue_exit_reason("dump", size, 0.01, 0.0090, 60.0) == "dump"
     # venue still fine -> keep holding (no phantom stop from a vendor blip)
     assert venue_exit_reason("dump", size, 0.01, 0.0099, 60.0) is None
+    # extreme tape evidence corroborates at a shallower loss (run84
+    # uxTBskk6: venue quoted 1.01 for 10 s, then gapped to 0.747)
+    assert venue_exit_reason("dump", size, 0.01, 0.0096, 5.0,
+                             urgent=True) == "dump"
+    assert venue_exit_reason("dump", size, 0.01, 0.0096, 5.0) is None
+    assert venue_exit_reason("dump", size, 0.01, 0.0098, 5.0,
+                             urgent=True) is None
     # stop/trail/take still re-evaluated on the quote as before
     assert venue_exit_reason("stop", size, 0.01, 0.0085, 60.0) == "stop"
     assert venue_exit_reason("stop", size, 0.01, 0.0095, 60.0) is None

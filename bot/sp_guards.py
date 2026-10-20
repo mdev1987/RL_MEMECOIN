@@ -14,7 +14,19 @@ stop bucket and both run83 trades entered into an *active dump*:
 EXIT (while holding) — a single large sell or a burst of sells in the
 live WS swaps stream flags "the dump has started"; the shadow loop then
 only books the exit if the venue quote confirms a material loss, so a
-vendor blip cannot cause a phantom stop.
+vendor blip cannot cause a phantom stop. Extreme tape evidence keeps the
+venue check but corroborates at a shallower loss and re-quotes sooner.
+
+run84 (2026-10-19/20) exposed a data-latency hole rather than a
+threshold problem: the vendor REST tape indexes ~2-3 s behind the live
+second, so at the gate the check saw 0-3 rows while 20+ existed for the
+same second. Every one of the four buys had n<=3 and the flow guard was
+silent (the only real block was the safety guard). run84 uxTBskk6
+entered on a gate whose second contained a 5.98 SOL sell (4.4 % of a
+135 SOL mcap) and stopped at -25 %. The caller now waits for the tape to
+reach the gate second and evaluates at the vendor's newest timestamp
+(`SP_GATE_SETTLE_S`), so these features are computed on the same tape
+the thresholds were fitted on.
 
 Everything is fail-open: a missing tape, missing safety data or missing
 dev history never blocks a trade. Thresholds are env-tunable so a run
@@ -69,6 +81,7 @@ class DumpCfg:
     single_mcap_frac: float = 0.015   # sell >= 1.5 % of market cap triggers
     sum_sol: float = 6.0              # or this much sold in the window...
     net_sol: float = -4.0             # ...with net flow this bad
+    urgent_mult: float = 2.0          # this many times the trigger = urgent
 
 
 def flow_cfg() -> FlowCfg:
@@ -94,6 +107,7 @@ def dump_cfg() -> DumpCfg:
         single_mcap_frac=_f("SP_DUMP_SINGLE_MCAP_FRAC", 0.015),
         sum_sol=_f("SP_DUMP_SUM_SOL", 6.0),
         net_sol=_f("SP_DUMP_NET_SOL", -4.0),
+        urgent_mult=_f("SP_DUMP_URGENT_MULT", 2.0),
     )
 
 
@@ -298,3 +312,31 @@ def dump_trigger(recent: list[dict], now: float,
         return True, (f"sells {sold:.2f} SOL in {cfg.window_s:g}s "
                       f"net {net:+.2f}")
     return False, ""
+
+
+def dump_urgency(recent: list[dict], now: float,
+                 cfg: DumpCfg | None = None) -> bool:
+    """True when the live dump evidence is extreme, not merely over the line.
+
+    run84 uxTBskk6 (2026-10-19 18:01Z) entered one second before a 5.98
+    SOL sell (4.4 % of a 135 SOL mcap). The dump exit fired 0.6 s later,
+    the venue quote disagreed twice, and by the confirmation the quote
+    had collapsed to 0.747 (-25 %). Extreme tape evidence keeps the venue
+    confirmation (no phantom stops) but may corroborate at a shallower
+    loss (`SHADOW_DUMP_URGENT_DD`) and re-quote sooner (1 s cooldown).
+    """
+    cfg = cfg or dump_cfg()
+    if not cfg.enabled or not recent:
+        return False
+    win = [r for r in recent if r["ts"] >= now - cfg.window_s]
+    sells = [r for r in win if r["side"] == "SELL"]
+    if not sells:
+        return False
+    mcap = max([r.get("mcap") or 0.0 for r in recent] or [0.0])
+    thresh = max(cfg.single_min_sol, cfg.single_mcap_frac * mcap)
+    if any(s["sol"] >= cfg.urgent_mult * thresh for s in sells):
+        return True
+    buys = [r for r in win if r["side"] == "BUY"]
+    net = sum(r["sol"] for r in buys) - sum(r["sol"] for r in sells)
+    return (sum(r["sol"] for r in sells) >= cfg.urgent_mult * cfg.sum_sol
+            and net <= cfg.net_sol)
