@@ -87,6 +87,16 @@ DUMP_VETO_COOL_S = float(os.environ.get("SHADOW_DUMP_VETO_COOL_S", "1.0"))
 SP_SETTLE_S = float(os.environ.get("SP_GATE_SETTLE_S", "4.0"))
 SP_SETTLE_POLL_S = float(os.environ.get("SP_GATE_SETTLE_POLL_S", "0.4"))
 SP_TAPE_STALE_S = float(os.environ.get("SP_GATE_STALE_S", "10.0"))
+# Profit lock (breakeven guard): once a position has shown a real gain, do
+# not let it round-trip into a loss. Evidence: the frozen 15 % trail only
+# protects profit above ~+17.6 %; below that it exits *below* entry
+# (run85 fpam8wyN peaked +8.2 % and exited -8.5 %; run82 8dcJQQxN peaked
+# +34.9 % and drained to -81 %). Armed at +5 %, exit at breakeven; the
+# venue quote still has to corroborate (<= +1 %) so a tape blip cannot
+# cut a runner.
+BE_ARM = float(os.environ.get("SHADOW_BE_ARM", "0.05"))
+BE_FLOOR = float(os.environ.get("SHADOW_BE_FLOOR", "0.0"))
+BE_MAX_FILL = float(os.environ.get("SHADOW_BE_MAX_FILL", "0.01"))
 # Liveness: run82 had no heartbeat, so a dead stream looked like a quiet
 # market. Log counters every 5 min; warn at 60 s of total silence and
 # fail the run at 10 min (a half-open socket must not fake a 24 h run).
@@ -134,6 +144,22 @@ OURS_MARKERS = ("order error", "HTTP 401", "HTTP 403", "HTTP 429",
 VENUE_MARKERS = ("HTTP 400", "no quote")
 
 
+def profit_lock_due(size: float, peak: float, mark: float,
+                    arm: float | None = None,
+                    floor: float | None = None) -> bool:
+    """True when an armed position has fallen back to the lock floor.
+
+    `peak` and `mark` are SOL marks (mark/cost ratios), so this is
+    size-relative. Defaults come from the module constants; arm<=0
+    disables the rule.
+    """
+    arm = BE_ARM if arm is None else arm
+    floor = BE_FLOOR if floor is None else floor
+    if arm <= 0 or size <= 0:
+        return False
+    return peak >= size * (1.0 + arm) and mark <= size * (1.0 + floor)
+
+
 def venue_exit_reason(why: str, size: float, peak: float, fill: float,
                       age_s: float, urgent: bool = False) -> str | None:
     """Venue-confirmed exit: the executable quote has the final say.
@@ -153,6 +179,11 @@ def venue_exit_reason(why: str, size: float, peak: float, fill: float,
         # for 10 s after a 4.4 %-of-mcap sell, then gapped to 0.747.
         dd = DUMP_URGENT_DD if urgent else DUMP_DD
         return "dump" if fill <= size * (1.0 - dd) else None
+    if why == "be":
+        # profit lock: only book the breakeven exit if the executable
+        # quote has actually lost the gain (<= +1 %); a tape-only dip with
+        # the venue still bid cannot cut a runner like run84 54XyfgB9.
+        return "be" if fill <= size * (1.0 + BE_MAX_FILL) else None
     if why not in ("stop", "trail", "take"):
         return why
     return S.decide_exit(size, peak, fill, age_s)
@@ -522,6 +553,9 @@ def main() -> None:
                                         time.time() - p["t"])
                     if why is None and p.get("dump"):
                         why = "dump"  # vendor tape flagged the dump
+                    if why is None and profit_lock_due(
+                            p["size"], p.get("peak", 0.0), mark):
+                        why = "be"  # armed gain round-tripping to entry
                     if why is None or w.s.halted:
                         continue
                     if time.time() < p.get("cool_until", 0.0):

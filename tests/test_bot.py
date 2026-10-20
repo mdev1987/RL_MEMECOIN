@@ -1722,6 +1722,27 @@ def test_shadow_sp_gate_settle_waits_for_lagging_tape():
          SL.SP_SETTLE_S, SL.SP_SETTLE_POLL_S) = orig
 
 
+def test_shadow_profit_lock():
+    # the frozen 15 % trail only protects profit above ~+17.6 %; below that
+    # a trade that showed a real gain could round-trip into a loss
+    # (run85 fpam8wyN: peak +8.2 % -> -8.5 %). Armed at +5 %, exit at
+    # breakeven, still venue-confirmed.
+    from bot.shadow_loop import profit_lock_due, venue_exit_reason
+    size = 0.01
+    assert not profit_lock_due(size, 0.0104, 0.0095)   # not armed
+    assert profit_lock_due(size, 0.0105, 0.0100)       # armed, back to entry
+    assert profit_lock_due(size, 0.01082, 0.00915)     # fpam8wyN shape
+    assert not profit_lock_due(size, 0.0105, 0.0101)   # still above entry
+    assert not profit_lock_due(size, 0.02, 0.01, arm=0)  # disabled
+    # venue confirmation: book only when the executable quote lost the gain
+    assert venue_exit_reason("be", size, 0.0105, 0.0099, 60) == "be"
+    assert venue_exit_reason("be", size, 0.0105, 0.0102, 60) is None
+    # 54XyfgB9 shape: tape dips, venue still +5 % -> do not cut the runner
+    assert venue_exit_reason("be", size, 0.016, 0.0158, 300) is None
+    # time-based reasons still pass through untouched
+    assert venue_exit_reason("stale", size, 0.01, 0.005, 900) == "stale"
+
+
 def test_shadow_dump_exit_needs_venue_loss():
     from bot.shadow_loop import venue_exit_reason
     size = 0.01

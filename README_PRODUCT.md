@@ -407,7 +407,8 @@ Tunables (all env): `SP_FLOW_GUARD`, `SP_MIN_TAPE`, `SP_MAX_SELL_1S`,
 `SP_DUMP_WATCH`, `SP_DUMP_SINGLE_MIN_SOL`, `SP_DUMP_SINGLE_MCAP_FRAC`,
 `SP_DUMP_SUM_SOL`, `SP_DUMP_NET_SOL`, `SHADOW_DUMP_EXIT_DD`,
 `SHADOW_DUMP_URGENT_DD`, `SHADOW_DUMP_VETO_COOL_S`, `SP_GATE_SETTLE_S`,
-`SP_GATE_SETTLE_POLL_S`, `SP_GATE_STALE_S`, `SP_DUMP_URGENT_MULT`.
+`SP_GATE_SETTLE_POLL_S`, `SP_GATE_STALE_S`, `SP_DUMP_URGENT_MULT`,
+`SHADOW_BE_ARM`, `SHADOW_BE_FLOOR`, `SHADOW_BE_MAX_FILL`.
 
 Run84 (first run with the data layer):
 
@@ -451,13 +452,27 @@ a sweep close with no corroboration at all.
 Throughput note: 10 of 14 gates were skipped by the frozen v3 deviation
 filter (`>5 %`), not by solpump; all four gates with dev ≤ 5 % were bought.
 
-Run85 (first run with the settle wait + urgent dump path):
+**3. Profit lock (run85 → run86).** The frozen 15 % trail only protects
+profit above ~+17.6 %; below that it exits *below* entry. Run85 fpam8wyN
+peaked +8.2 % and exited −8.5 %; run82 8dcJQQxN peaked +34.9 % and
+drained to −81 %. The strategy now arms a breakeven lock at +5 %
+(`SHADOW_BE_ARM`) and exits at entry (`SHADOW_BE_FLOOR=0`), but only when
+the venue quote corroborates (fill ≤ +1 %, `SHADOW_BE_MAX_FILL`) — so a
+tape blip cannot cut a runner (run84 54XyfgB9 was +63 %). The lock is
+pure protection: it never opens a position or changes entries.
+
+Run85 (fixed gate, pre-lock) collected 5 signals / 5 gates / 2 buys:
+−0.00262 SOL (0W/2L, trail −0.00085, stop −0.00177). Gate depth was
+8–18 swaps with waits 1.8–6.4 s — the latency fix held.
+
+Run86 (settle wait + profit lock):
 
 ```
 oxmgr start --name meme-shadow --restart never --cwd "$PWD" \
-  --env SHADOW_RUN=85 --env SHADOW_SECS=172800 scripts/shadow_run.sh
-.venv/bin/python -m eval.shadow_report data/shadow_run85.log
+  --env SHADOW_RUN=86 --env SHADOW_SECS=172800 scripts/shadow_run.sh
+.venv/bin/python -m eval.shadow_report data/shadow_run86.log
 ```
 
-Tests: 89/89 (`python -m tests`), including rule-order, no-lookahead,
-paging, fail-open, settle-wait, urgency and dump-corroboration cases.
+Tests: 90/90 (`python -m tests`), including rule-order, no-lookahead,
+paging, fail-open, settle-wait, urgency, profit-lock and
+dump-corroboration cases.

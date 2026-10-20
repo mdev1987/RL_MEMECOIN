@@ -1,0 +1,7 @@
+buys=2 closes=2 W=0 L=2 pnl=-0.00262
+  stop: n=1 pnl=-0.00177
+  trail: n=1 pnl=-0.00085
+entry: ghost=0 sign_failed=0 noquote=0
+exit no-quote=0 sweep no-quote=0 rug-close=0
+solpump: passed=5 blocked=0 dump_flags=0 markers=0
+NO FINAL SUMMARY LINE (run killed or wrapper lost)
